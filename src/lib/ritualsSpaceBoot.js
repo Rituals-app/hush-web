@@ -5,14 +5,17 @@
  * module reads the location. Later tickets delivered to a running page
  * (fragment-only navigations) are caught by the listener. In the Rituals hub's
  * frame, the router's page changes replace the frame's address instead of
- * adding history steps (installEmbeddedHistory).
+ * adding history steps (installEmbeddedHistory), and the parent's messages
+ * (visible, escape) are accepted from the Rituals origin only.
  */
 import {
   captureSpaceTicketFromLocation,
   installEmbeddedHistory,
+  installRitualsParentListener,
   installSpaceTicketListener,
 } from './ritualsSpace';
 
 captureSpaceTicketFromLocation();
 installSpaceTicketListener();
 installEmbeddedHistory();
+installRitualsParentListener();
