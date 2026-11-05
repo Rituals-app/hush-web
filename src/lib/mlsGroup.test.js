@@ -22,6 +22,8 @@ import {
   encryptMessage,
   decryptMessage,
   catchupCommits,
+  leaveAllChannelGroups,
+  resetEvictionRejoinBound,
 } from './mlsGroup.js';
 
 // ---------------------------------------------------------------------------
@@ -210,7 +212,21 @@ describe('joinChannelGroup', () => {
       expect.any(String), // base64 commit
       expect.any(String), // base64 groupInfo
       1,                  // server epoch 0 -> commit advances to epoch 1
+      { parentEpoch: 0 },
     );
+  });
+
+  it('retries the external join after a 409 epoch_conflict (max 3 attempts)', async () => {
+    deps.sleep = vi.fn().mockResolvedValue(undefined);
+    const conflict = Object.assign(new Error('epoch_conflict'), { status: 409, code: 'epoch_conflict' });
+    deps.api.postMLSCommit.mockRejectedValueOnce(conflict).mockResolvedValueOnce(undefined);
+    await joinChannelGroup(deps, 'ch-2');
+    expect(deps.api.postMLSCommit).toHaveBeenCalledTimes(2);
+    expect(deps.api.getMLSGroupInfo).toHaveBeenCalledTimes(2);
+
+    deps.api.postMLSCommit.mockReset().mockRejectedValue(conflict);
+    await expect(joinChannelGroup(deps, 'ch-2')).rejects.toThrow('epoch_conflict');
+    expect(deps.api.postMLSCommit).toHaveBeenCalledTimes(3);
   });
 
   it('merges the pending External Commit locally after posting it', async () => {
@@ -329,7 +345,8 @@ describe('addMemberToChannel', () => {
       'ch-3',
       expect.any(String),
       expect.any(String),
-      2, // epoch from addMembers mock
+      3, // post-commit epoch: addMembers built on 2
+      { parentEpoch: 2 },
     );
   });
 
@@ -408,8 +425,61 @@ describe('removeMemberFromChannel', () => {
       'ch-4',
       expect.any(String),
       expect.any(String),
-      3, // epoch from removeMembers mock
+      4, // post-commit epoch: removeMembers built on 3
+      { parentEpoch: 3 },
     );
+  });
+
+  it('sends the removes hint and refreshes GroupInfo after the merge', async () => {
+    deps.hushCrypto.mergePendingCommit.mockResolvedValue({ groupInfoBytes: new Uint8Array([7]), epoch: 4 });
+    const removes = [{ userId: 'u-2', deviceId: 'd-2' }];
+    await expect(removeMemberFromChannel(deps, 'ch-4', 'm', { removes })).resolves.toEqual({ removed: true });
+    expect(deps.api.postMLSCommit.mock.calls[0][5]).toEqual({ parentEpoch: 3, removes });
+    expect(deps.api.putMLSGroupInfo).toHaveBeenCalledWith('test-token', 'ch-4', expect.any(String), 4);
+    const mergeOrder = deps.hushCrypto.mergePendingCommit.mock.invocationCallOrder[0];
+    expect(deps.api.putMLSGroupInfo.mock.invocationCallOrder[0]).toBeGreaterThan(mergeOrder);
+    expect(deps.api.postMLSCommit.mock.invocationCallOrder[0]).toBeLessThan(mergeOrder);
+  });
+
+  it('catches up before removing', async () => {
+    await removeMemberFromChannel(deps, 'ch-4', 'm');
+    expect(deps.api.getMLSCommitsSinceEpoch.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.hushCrypto.removeMembers.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('a failed GroupInfo PUT does not fail the removal', async () => {
+    deps.api.putMLSGroupInfo.mockRejectedValue(new Error('boom'));
+    await expect(removeMemberFromChannel(deps, 'ch-4', 'm')).resolves.toEqual({ removed: true });
+  });
+
+  it('treats an already-absent member as done without posting', async () => {
+    deps.hushCrypto.removeMembers.mockRejectedValueOnce(new Error('unknown member'));
+    await expect(removeMemberFromChannel(deps, 'ch-4', 'm')).resolves.toEqual({ removed: false });
+    expect(deps.api.postMLSCommit).not.toHaveBeenCalled();
+  });
+
+  it('on 409 does not merge, catches up and retries; gives up after 3 attempts', async () => {
+    deps.sleep = vi.fn().mockResolvedValue(undefined);
+    const conflict = Object.assign(new Error('epoch_conflict'), { status: 409, code: 'epoch_conflict' });
+    deps.api.postMLSCommit.mockRejectedValueOnce(conflict);
+    await expect(removeMemberFromChannel(deps, 'ch-4', 'm')).resolves.toEqual({ removed: true });
+    expect(deps.api.postMLSCommit).toHaveBeenCalledTimes(2);
+    expect(deps.hushCrypto.mergePendingCommit).toHaveBeenCalledTimes(1);
+    expect(deps.api.getMLSCommitsSinceEpoch).toHaveBeenCalledTimes(2);
+
+    deps.api.postMLSCommit.mockReset().mockRejectedValue(conflict);
+    deps.hushCrypto.mergePendingCommit.mockClear();
+    await expect(removeMemberFromChannel(deps, 'ch-4', 'm')).resolves.toEqual({ removed: false });
+    expect(deps.api.postMLSCommit).toHaveBeenCalledTimes(3);
+    expect(deps.hushCrypto.mergePendingCommit).not.toHaveBeenCalled();
+  });
+
+  it('does not retry on a non-409 post failure', async () => {
+    deps.api.postMLSCommit.mockRejectedValue(Object.assign(new Error('bad'), { status: 400 }));
+    await expect(removeMemberFromChannel(deps, 'ch-4', 'm')).rejects.toThrow('bad');
+    expect(deps.api.postMLSCommit).toHaveBeenCalledTimes(1);
+    expect(deps.hushCrypto.mergePendingCommit).not.toHaveBeenCalled();
   });
 
   it('updates local group epoch from the merged commit after removing member', async () => {
@@ -452,7 +522,12 @@ describe('encryptMessage', () => {
     deps = makeDeps();
     // Group epoch already set (non-null) so lazy join is skipped
     deps.mlsStore.getGroupEpoch.mockResolvedValue(0);
+    resetEvictionRejoinBound();
   });
+
+  // A removed member is refused GroupInfo by the server (admission check).
+  const refuseGroupInfo = () =>
+    deps.api.getMLSGroupInfo.mockRejectedValue(Object.assign(new Error('not a channel member'), { status: 403 }));
 
   it('stores plaintext in local cache before encrypting', async () => {
     await encryptMessage(deps, 'ch-5', 'hello world');
@@ -523,10 +598,28 @@ describe('encryptMessage', () => {
     expect(Array.from(result.messageBytes)).toEqual([90, 91, 92]);
   });
 
-  it('does NOT recover from GroupStateError(UseAfterEviction) — eviction must propagate', async () => {
-    // SECURITY: an evicted MLS leaf must not silently rejoin via send
-    // recovery. The error must propagate; the rejoin/retry side
-    // effects must not run.
+  it('re-joins and resends once after eviction when the server still admits the member', async () => {
+    // Rituals fork (D19a): a same-device re-add. The server's GroupInfo
+    // membership check is the admission test.
+    deps.api.getMLSGroupInfo.mockReset().mockResolvedValue({ groupInfo: btoa('x'), epoch: 5 });
+    deps.hushCrypto.createMessage
+      .mockRejectedValueOnce(new Error('GroupStateError(UseAfterEviction)'))
+      .mockResolvedValueOnce({ messageBytes: new Uint8Array([1]) });
+    const result = await encryptMessage(deps, 'ch-5', 'hello again');
+    expect(Array.from(result.messageBytes)).toEqual([1]);
+    expect(deps.hushCrypto.joinGroupExternal).toHaveBeenCalledTimes(1);
+    expect(deps.hushCrypto.createGroup).not.toHaveBeenCalled();
+
+    // Bounded: a second eviction within 60 s propagates.
+    deps.hushCrypto.createMessage.mockRejectedValueOnce(new Error('GroupStateError(UseAfterEviction)'));
+    await expect(encryptMessage(deps, 'ch-5', 'again')).rejects.toThrow(/UseAfterEviction/);
+    expect(deps.hushCrypto.joinGroupExternal).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT recover from GroupStateError(UseAfterEviction) when the server refuses — eviction must propagate', async () => {
+    refuseGroupInfo();
+    // SECURITY: an evicted MLS leaf the server no longer admits must not
+    // rejoin. The error must propagate; no join commit is posted.
     deps.hushCrypto.createMessage.mockRejectedValueOnce(
       new Error('GroupStateError(UseAfterEviction)'),
     );
@@ -535,26 +628,25 @@ describe('encryptMessage', () => {
       /UseAfterEviction/,
     );
 
-    expect(deps.mlsStore.deleteGroupEpoch).not.toHaveBeenCalled();
-    expect(deps.api.getMLSGroupInfo).not.toHaveBeenCalled();
+    expect(deps.hushCrypto.joinGroupExternal).not.toHaveBeenCalled();
+    expect(deps.api.postMLSCommit).not.toHaveBeenCalled();
     expect(deps.api.putMLSGroupInfo).not.toHaveBeenCalled();
     expect(deps.hushCrypto.createMessage).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT recover from eviction-shaped variants ("after eviction" / "evicted" / "AfterEviction")', async () => {
+    refuseGroupInfo();
     deps.hushCrypto.createMessage.mockRejectedValueOnce(
       new Error('GroupStateError(UseAfterEviction): leaf removed, evicted'),
     );
     await expect(encryptMessage(deps, 'ch-5', 'x')).rejects.toThrow(/evicted/);
-    expect(deps.mlsStore.deleteGroupEpoch).not.toHaveBeenCalled();
-    expect(deps.api.getMLSGroupInfo).not.toHaveBeenCalled();
+    expect(deps.hushCrypto.joinGroupExternal).not.toHaveBeenCalled();
+    expect(deps.api.postMLSCommit).not.toHaveBeenCalled();
     expect(deps.api.putMLSGroupInfo).not.toHaveBeenCalled();
     expect(deps.hushCrypto.createMessage).toHaveBeenCalledTimes(1);
 
     deps.hushCrypto.createMessage.mockClear();
-    deps.mlsStore.deleteGroupEpoch.mockClear();
-    deps.api.getMLSGroupInfo.mockClear();
-    deps.api.putMLSGroupInfo.mockClear();
+    resetEvictionRejoinBound();
 
     deps.hushCrypto.createMessage.mockRejectedValueOnce(
       new Error('member after eviction'),
@@ -562,15 +654,13 @@ describe('encryptMessage', () => {
     await expect(encryptMessage(deps, 'ch-5', 'y')).rejects.toThrow(
       /after eviction/,
     );
-    expect(deps.mlsStore.deleteGroupEpoch).not.toHaveBeenCalled();
-    expect(deps.api.getMLSGroupInfo).not.toHaveBeenCalled();
+    expect(deps.hushCrypto.joinGroupExternal).not.toHaveBeenCalled();
+    expect(deps.api.postMLSCommit).not.toHaveBeenCalled();
     expect(deps.api.putMLSGroupInfo).not.toHaveBeenCalled();
     expect(deps.hushCrypto.createMessage).toHaveBeenCalledTimes(1);
 
     deps.hushCrypto.createMessage.mockClear();
-    deps.mlsStore.deleteGroupEpoch.mockClear();
-    deps.api.getMLSGroupInfo.mockClear();
-    deps.api.putMLSGroupInfo.mockClear();
+    resetEvictionRejoinBound();
 
     deps.hushCrypto.createMessage.mockRejectedValueOnce(
       new Error('GroupStateError(MemberAfterEviction)'),
@@ -578,13 +668,14 @@ describe('encryptMessage', () => {
     await expect(encryptMessage(deps, 'ch-5', 'z')).rejects.toThrow(
       /AfterEviction/,
     );
-    expect(deps.mlsStore.deleteGroupEpoch).not.toHaveBeenCalled();
-    expect(deps.api.getMLSGroupInfo).not.toHaveBeenCalled();
+    expect(deps.hushCrypto.joinGroupExternal).not.toHaveBeenCalled();
+    expect(deps.api.postMLSCommit).not.toHaveBeenCalled();
     expect(deps.api.putMLSGroupInfo).not.toHaveBeenCalled();
     expect(deps.hushCrypto.createMessage).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT recover when a wrapped error mentions both UseAfterEviction and Group not found', async () => {
+    refuseGroupInfo();
     // Belt-and-suspenders: an upstream wrap that bundles both
     // strings must still fail closed because of the eviction
     // marker.
@@ -596,8 +687,8 @@ describe('encryptMessage', () => {
       /UseAfterEviction/,
     );
 
-    expect(deps.mlsStore.deleteGroupEpoch).not.toHaveBeenCalled();
-    expect(deps.api.getMLSGroupInfo).not.toHaveBeenCalled();
+    expect(deps.hushCrypto.joinGroupExternal).not.toHaveBeenCalled();
+    expect(deps.api.postMLSCommit).not.toHaveBeenCalled();
     expect(deps.api.putMLSGroupInfo).not.toHaveBeenCalled();
     expect(deps.hushCrypto.createMessage).toHaveBeenCalledTimes(1);
   });
@@ -606,6 +697,18 @@ describe('encryptMessage', () => {
 // ---------------------------------------------------------------------------
 // decryptMessage
 // ---------------------------------------------------------------------------
+
+describe('leaveAllChannelGroups', () => {
+  it('drops epoch, group storage and cached plaintext for the left channels', async () => {
+    const deps = makeDeps();
+    deps.mlsStore.deleteGroupStorage = vi.fn().mockResolvedValue(1);
+    deps.mlsStore.deleteLocalPlaintextsForChannels = vi.fn().mockResolvedValue(2);
+    await leaveAllChannelGroups(deps, ['ch-a', 'ch-b']);
+    expect(deps.mlsStore.deleteGroupEpoch).toHaveBeenCalledTimes(2);
+    expect(deps.mlsStore.deleteGroupStorage).toHaveBeenCalledWith(deps.db, new TextEncoder().encode('ch-a'));
+    expect(deps.mlsStore.deleteLocalPlaintextsForChannels).toHaveBeenCalledWith(deps.db, ['ch-a', 'ch-b']);
+  });
+});
 
 describe('decryptMessage', () => {
   let deps;
