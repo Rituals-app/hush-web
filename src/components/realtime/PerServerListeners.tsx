@@ -5,6 +5,7 @@ import { useGuildChannelIds } from "@/hooks/useGuildChannelIds"
 import { useTextChannelMLSSubscriptions } from "@/hooks/useTextChannelMLSSubscriptions"
 import { useServerModerationEvents } from "@/adapters/useServerModerationEvents"
 import { useServerJoinEvents } from "@/adapters/useServerJoinEvents"
+import { useLegacyPlaintextTagSweep } from "@/hooks/useLegacyPlaintextTagSweep"
 import { RITUALS_HOME_URL, isEmbedded } from "@/lib/ritualsSpace"
 
 interface WsClientLike {
@@ -74,6 +75,8 @@ export function PerServerListeners({
     baseUrl: instanceUrl,
     currentUserId,
   })
+
+  useLegacyPlaintextTagSweep({ instanceUrl, token, serverId, currentUserId, textChannelIds })
 
   useTextChannelMLSSubscriptions(
     wsClient as Parameters<typeof useTextChannelMLSSubscriptions>[0],

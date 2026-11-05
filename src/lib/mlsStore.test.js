@@ -22,6 +22,9 @@ import {
   getLocalPlaintext,
   setLocalPlaintext,
   deleteLocalPlaintextsForChannels,
+  tagLocalPlaintext,
+  getLocalPlaintextTagState,
+  markPlaintextTagSweep,
   deleteGroupStorage,
   getGroupEpoch,
   setGroupEpoch,
@@ -726,11 +729,31 @@ describe('mlsStore', () => {
       await setLocalPlaintext(db, 'gone-2', { plaintext: 'b', timestamp: 2, channelId: 'ch-gone' });
       await setLocalPlaintext(db, 'kept', { plaintext: 'c', timestamp: 3, channelId: 'ch-kept' });
       await setLocalPlaintext(db, 'untagged', { plaintext: 'd', timestamp: 4 });
-      expect(await deleteLocalPlaintextsForChannels(db, ['ch-gone'])).toBe(2);
+      expect((await deleteLocalPlaintextsForChannels(db, ['ch-gone'])).sort()).toEqual(['gone-1', 'gone-2']);
       expect(await getLocalPlaintext(db, 'gone-1')).toBeNull();
       expect(await getLocalPlaintext(db, 'gone-2')).toBeNull();
       expect(await getLocalPlaintext(db, 'kept')).toEqual({ plaintext: 'c', timestamp: 3, channelId: 'ch-kept' });
       expect(await getLocalPlaintext(db, 'untagged')).toEqual({ plaintext: 'd', timestamp: 4 });
+      db.close();
+    });
+
+    it('tags legacy rows so a removal deletes them, and tracks sweeps', async () => {
+      const db = await nextDb();
+      await setLocalPlaintext(db, 'legacy', { plaintext: 'old', timestamp: 1 });
+      await setLocalPlaintext(db, 'tagged', { plaintext: 'new', timestamp: 2, channelId: 'ch-a' });
+      await tagLocalPlaintext(db, 'vault-only', 'ch-gone');
+      let state = await getLocalPlaintextTagState(db);
+      expect([...state.untagged]).toEqual(['legacy']);
+      expect([...state.tagged].sort()).toEqual(['tagged', 'vault-only']);
+      await tagLocalPlaintext(db, 'legacy', 'ch-gone');
+      await tagLocalPlaintext(db, 'tagged', 'ch-other');
+      await markPlaintextTagSweep(db, 'ch-gone');
+      state = await getLocalPlaintextTagState(db);
+      expect(state.untagged.size).toBe(0);
+      expect([...state.swept]).toEqual(['ch-gone']);
+      expect((await deleteLocalPlaintextsForChannels(db, ['ch-gone'])).sort()).toEqual(['legacy', 'vault-only']);
+      expect(await getLocalPlaintext(db, 'legacy')).toBeNull();
+      expect((await getLocalPlaintext(db, 'tagged')).channelId).toBe('ch-a');
       db.close();
     });
   });

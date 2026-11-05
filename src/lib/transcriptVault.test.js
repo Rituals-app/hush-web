@@ -857,3 +857,38 @@ describe('transcriptVault — streaming wire-to-at-rest importer', () => {
     expect(getTranscriptCacheStatus().loaded).toBe(false);
   });
 });
+
+import { forgetTranscriptEntries } from './transcriptVault';
+
+describe('transcriptVault — forgetting a removed Space (Rituals fork)', () => {
+  it('drops forgotten entries now and rewrites them out of the at-rest frames on the next unlock', async () => {
+    const userId = nextUserId();
+    const rows = [
+      { messageId: 'gone-1', plaintext: 'secret', timestamp: 1, channelId: 'ch-gone' },
+      { messageId: 'gone-2', plaintext: 'untagged but known', timestamp: 2 },
+      { messageId: 'kept', plaintext: 'stays', timestamp: 3, channelId: 'ch-kept' },
+    ];
+    await importAndReprotectTranscriptRows({ userId, rootPrivateKey: ROOT_KEY_A, rows });
+    expect(await loadTranscriptCacheFromDisk({ userId, rootPrivateKey: ROOT_KEY_A })).toBe(3);
+
+    expect(await forgetTranscriptEntries(['gone-2'], ['ch-gone'], userId)).toBe(2);
+    expect(getTranscriptEntry('gone-1')).toBeNull();
+    expect(getTranscriptEntry('gone-2')).toBeNull();
+    expect(getTranscriptEntry('kept').plaintext).toBe('stays');
+
+    // A fresh unlock (e.g. after a reload) must not bring them back, and it
+    // rewrites the encrypted frames without them.
+    clearTranscriptCache();
+    expect(await loadTranscriptCacheFromDisk({ userId, rootPrivateKey: ROOT_KEY_A })).toBe(1);
+    expect(getTranscriptEntry('gone-1')).toBeNull();
+    expect(getTranscriptEntry('kept').plaintext).toBe('stays');
+    const db = await openTranscriptStore(userId);
+    try {
+      const framed = await loadFramedTranscriptAtRest(db);
+      expect(framed.meta.frameCount).toBe(1);
+    } finally {
+      db.close();
+      deleteTranscriptDatabase(userId);
+    }
+  });
+});

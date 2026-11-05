@@ -970,6 +970,7 @@ export function listTranscriptCacheEntries() {
       timestamp: row.timestamp,
     };
     if (row.senderId !== undefined) copy.senderId = row.senderId;
+    if (row.channelId !== undefined) copy.channelId = row.channelId;
     out.push(copy);
   }
   return out;
@@ -1117,11 +1118,96 @@ export async function loadTranscriptCacheFromDisk({ userId, rootPrivateKey }) {
   // Frame-by-frame decode releases each frame's plaintext as soon as
   // its rows are pushed onto the accumulator. The whole-disk blob is
   // never materialised even when the cache hydration runs.
-  const rows = framed
+  let rows = framed
     ? await decodeFramedTranscriptAtRest(key, framed.frames)
     : await decryptTranscriptBlob(key, blob);
+  if (isStale()) return 0;
+  rows = await applyTranscriptForgets(userId, key, rows);
   if (isStale()) return 0;
 
   setTranscriptCache(userId, rows);
   return rows.length;
+}
+
+// Rituals fork (2026-11-05): messages of a Space this person was removed from.
+// The at-rest frames can only be rewritten with the vault key, so the ids and
+// channels to drop are kept here until the next unlock rewrites the frames
+// without them (applyTranscriptForgets); the rewrite clears this row.
+const TRANSCRIPT_FORGET_KEY = 'rituals-forget';
+
+/**
+ * Rituals fork (2026-11-05): drop a removed Space's messages from the
+ * transcript: from the in-memory cache now, and from the encrypted at-rest
+ * frames at the next unlock.
+ *
+ * @param {readonly string[]} messageIds
+ * @param {readonly string[]} channelIds - rows carrying one of these channels are dropped too
+ * @param {string|null} [userId] - defaults to the user whose transcript is loaded
+ * @returns {Promise<number>} cache entries removed
+ */
+export async function forgetTranscriptEntries(messageIds, channelIds, userId = _state.userId) {
+  const ids = new Set(messageIds);
+  const channels = new Set(channelIds);
+  let removed = 0;
+  for (const [id, row] of _state.cache) {
+    if (ids.has(id) || (row?.channelId && channels.has(row.channelId))) {
+      _state.cache.delete(id);
+      ids.add(id);
+      removed++;
+    }
+  }
+  if (!userId || (!ids.size && !channels.size)) return removed;
+  const db = await openTranscriptStore(userId);
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(TRANSCRIPT_STORE, 'readwrite');
+      const store = tx.objectStore(TRANSCRIPT_STORE);
+      const req = store.get(TRANSCRIPT_FORGET_KEY);
+      req.onsuccess = () => {
+        const prev = req.result?.value ?? {};
+        store.put({
+          key: TRANSCRIPT_FORGET_KEY,
+          value: {
+            ids: [...new Set([...(prev.ids ?? []), ...ids])],
+            channels: [...new Set([...(prev.channels ?? []), ...channels])],
+          },
+        });
+      };
+      tx.oncomplete = () => resolve(undefined);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
+  return removed;
+}
+
+/**
+ * Rituals fork (2026-11-05): apply pending forgets to freshly decrypted rows
+ * and rewrite the at-rest frames without them (the rewrite clears the
+ * pending row).
+ *
+ * @param {string} userId
+ * @param {CryptoKey} key
+ * @param {Array<any>} rows
+ * @returns {Promise<Array<any>>}
+ */
+async function applyTranscriptForgets(userId, key, rows) {
+  const db = await openTranscriptStore(userId);
+  try {
+    const pending = await new Promise((resolve, reject) => {
+      const req = db.transaction(TRANSCRIPT_STORE, 'readonly').objectStore(TRANSCRIPT_STORE).get(TRANSCRIPT_FORGET_KEY);
+      req.onsuccess = () => resolve(req.result?.value ?? null);
+      req.onerror = () => reject(req.error);
+    });
+    if (!pending) return rows;
+    const ids = new Set(pending.ids ?? []);
+    const channels = new Set(pending.channels ?? []);
+    const kept = rows.filter((row) => !ids.has(row?.messageId) && !(row?.channelId && channels.has(row.channelId)));
+    await saveFramedTranscriptAtRest(db, key, kept);
+    return kept;
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
 }

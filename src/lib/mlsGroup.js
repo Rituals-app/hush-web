@@ -15,6 +15,8 @@
  *     token: string, mlsStore, hushCrypto, api, wsClient? }
  */
 
+import { forgetTranscriptEntries } from './transcriptVault';
+
 /**
  * @typedef {object} MlsCredential
  * @property {Uint8Array} signingPrivateKey
@@ -804,7 +806,10 @@ export async function leaveAllChannelGroups(deps, channelIds) {
     }
   }
   try {
-    await mlsStore.deleteLocalPlaintextsForChannels?.(db, channelIds);
+    const deleted = await mlsStore.deleteLocalPlaintextsForChannels?.(db, channelIds);
+    // The transcript vault holds plaintext that arrived with a linked device;
+    // the deleted ids include tag-only rows that point at it.
+    await forgetTranscriptEntries(Array.isArray(deleted) ? deleted : [], channelIds);
   } catch (err) {
     console.warn('[mlsGroup] Failed to delete cached plaintext for left channels', err);
   }

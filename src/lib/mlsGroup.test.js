@@ -25,6 +25,8 @@ import {
   leaveAllChannelGroups,
   resetEvictionRejoinBound,
 } from './mlsGroup.js';
+import 'fake-indexeddb/auto';
+import { setTranscriptCache, getTranscriptEntry, clearTranscriptCache } from './transcriptVault';
 
 // ---------------------------------------------------------------------------
 // Mock factories - mirrors mlsGroup.voice.test.js pattern
@@ -718,6 +720,25 @@ describe('leaveAllChannelGroups', () => {
     expect(deps.mlsStore.deleteGroupEpoch).toHaveBeenCalledTimes(2);
     expect(deps.mlsStore.deleteGroupStorage).toHaveBeenCalledWith(deps.db, new TextEncoder().encode('ch-a'));
     expect(deps.mlsStore.deleteLocalPlaintextsForChannels).toHaveBeenCalledWith(deps.db, ['ch-a', 'ch-b']);
+  });
+
+  it('also forgets the transcript-vault copies of the left channels', async () => {
+    setTranscriptCache('user-evicted', [
+      { messageId: 'vault-tagged', plaintext: 'a', timestamp: 1, channelId: 'ch-a' },
+      { messageId: 'legacy-1', plaintext: 'b', timestamp: 2 },
+      { messageId: 'other', plaintext: 'c', timestamp: 3, channelId: 'ch-z' },
+    ]);
+    try {
+      const deps = makeDeps();
+      deps.mlsStore.deleteGroupStorage = vi.fn().mockResolvedValue(1);
+      deps.mlsStore.deleteLocalPlaintextsForChannels = vi.fn().mockResolvedValue(['legacy-1']);
+      await leaveAllChannelGroups(deps, ['ch-a']);
+      expect(getTranscriptEntry('vault-tagged')).toBeNull();
+      expect(getTranscriptEntry('legacy-1')).toBeNull();
+      expect(getTranscriptEntry('other')?.plaintext).toBe('c');
+    } finally {
+      clearTranscriptCache();
+    }
   });
 });
 

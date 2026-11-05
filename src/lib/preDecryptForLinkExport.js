@@ -184,6 +184,7 @@ async function preDecryptChannel({ activeDb, channelId, messages, deps, mlsGroup
         plaintext,
         senderId: msg.senderId ?? undefined,
         timestamp: ts,
+        channelId,
       });
       stats.decrypted++;
     } catch (err) {

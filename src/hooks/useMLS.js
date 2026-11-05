@@ -138,7 +138,7 @@ export function useMLS({ getStore, getHistoryStore, getToken, channelId, baseUrl
           // Rituals fork: tag legacy rows with this channel so a removal can
           // delete them (mlsStore.deleteLocalPlaintextsForChannels).
           if (channelId && !row.channelId) {
-            mlsStore.setLocalPlaintext(db, messageId, { ...row, channelId }).catch(() => {});
+            Promise.resolve(mlsStore.tagLocalPlaintext?.(db, messageId, channelId)).catch(() => {});
           }
           return {
             content: row.plaintext,
@@ -153,6 +153,10 @@ export function useMLS({ getStore, getHistoryStore, getToken, channelId, baseUrl
       // a previous unlock on this device. The cache is cleared on lock.
       const transcriptRow = getTranscriptEntry(messageId);
       if (transcriptRow) {
+        // Rituals fork: a tag-only row lets a removal forget this entry.
+        if (db && channelId && !transcriptRow.channelId) {
+          Promise.resolve(mlsStore.tagLocalPlaintext?.(db, messageId, channelId)).catch(() => {});
+        }
         return {
           content: transcriptRow.plaintext,
           timestamp: transcriptRow.timestamp,

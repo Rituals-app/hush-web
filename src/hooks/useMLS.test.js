@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useMLS } from './useMLS';
+import { setTranscriptCache, clearTranscriptCache } from '../lib/transcriptVault';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -391,13 +392,23 @@ describe('useMLS', () => {
 
     it('back-fills the channel tag on an untagged row', async () => {
       mockDeps.mlsStore.getLocalPlaintext.mockResolvedValue({ plaintext: 'p', timestamp: 1 });
+      mockDeps.mlsStore.tagLocalPlaintext = vi.fn().mockResolvedValue(undefined);
       const { getCachedMessage } = useMLS({ getStore, getToken, channelId: 'ch-1', _deps: mockDeps });
-      await getCachedMessage('msg-legacy');
-      expect(mockDeps.mlsStore.setLocalPlaintext).toHaveBeenCalledWith(mockDb, 'msg-legacy', {
-        plaintext: 'p',
-        timestamp: 1,
-        channelId: 'ch-1',
-      });
+      expect(await getCachedMessage('msg-legacy')).toEqual({ content: 'p', timestamp: 1 });
+      expect(mockDeps.mlsStore.tagLocalPlaintext).toHaveBeenCalledWith(mockDb, 'msg-legacy', 'ch-1');
+    });
+
+    it('tags a transcript-vault hit so a removal can forget it', async () => {
+      mockDeps.mlsStore.getLocalPlaintext.mockResolvedValue(null);
+      mockDeps.mlsStore.tagLocalPlaintext = vi.fn().mockResolvedValue(undefined);
+      setTranscriptCache('u-1', [{ messageId: 'msg-vault', plaintext: 'v', timestamp: 2 }]);
+      try {
+        const { getCachedMessage } = useMLS({ getStore, getToken, channelId: 'ch-1', _deps: mockDeps });
+        expect(await getCachedMessage('msg-vault')).toEqual({ content: 'v', timestamp: 2 });
+        expect(mockDeps.mlsStore.tagLocalPlaintext).toHaveBeenCalledWith(mockDb, 'msg-vault', 'ch-1');
+      } finally {
+        clearTranscriptCache();
+      }
     });
   });
 

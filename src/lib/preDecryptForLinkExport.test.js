@@ -141,11 +141,13 @@ describe('preDecryptForLinkExport', () => {
       plaintext: 'hi alice',
       senderId: 'alice',
       timestamp: new Date('2026-04-01T10:00:00Z').getTime(),
+      channelId: 'text',
     });
     expect(stubs.localPlaintextStore.get('m2')).toEqual({
       plaintext: 'hi bob',
       senderId: 'bob',
       timestamp: new Date('2026-04-01T11:00:00Z').getTime(),
+      channelId: 'text',
     });
     // voice channel skipped
     expect(stubs.api.getChannelMessages).toHaveBeenCalledTimes(1);
