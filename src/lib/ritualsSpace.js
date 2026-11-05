@@ -312,7 +312,7 @@ function base64UrlToBytes(value) {
  * registration.
  *
  * @param {string} ticket
- * @returns {{ dn?: string, un?: string, name?: string, role?: string, exp?: number }|null}
+ * @returns {{ dn?: string, un?: string, name?: string, role?: string, exp?: number, acct?: string, seated?: boolean }|null}
  */
 export function readSpaceTicketHints(ticket) {
   if (!isPlausibleSpaceTicket(ticket)) return null;
@@ -328,6 +328,9 @@ export function readSpaceTicketHints(ticket) {
       role: typeof parsed.role === 'string' ? parsed.role : undefined,
       exp: Number.isFinite(parsed.exp) ? parsed.exp : undefined,
       acct: typeof parsed.acct === 'string' && ACCOUNT_RE.test(parsed.acct) ? parsed.acct : undefined,
+      // Optional, feature-detected: this Rituals account already holds a seat
+      // in the space (another device has the identity). Absent → undefined.
+      seated: typeof parsed.seated === 'boolean' ? parsed.seated : undefined,
     };
   } catch {
     return null;
@@ -418,7 +421,7 @@ export function spaceDisplayName(hints, fallback) {
  * @param {string} token - JWT for the space origin
  * @param {string} ticket
  * @param {string} [baseUrl] - instance origin ('' = this page's origin)
- * @returns {Promise<{ serverId: string, channelId: string|null }>}
+ * @returns {Promise<{ serverId: string, channelId: string|null, othersSeated?: boolean }>}
  */
 export async function claimRitualsSpace(token, ticket, baseUrl = '') {
   const url = `${baseUrl || ''}/api/rituals/spaces/claim`;
@@ -462,6 +465,8 @@ export async function claimRitualsSpace(token, ticket, baseUrl = '') {
   return {
     serverId,
     channelId: typeof body?.channelId === 'string' && body.channelId ? body.channelId : null,
+    // Feature-detected: other people already hold seats here. Absent → undefined.
+    ...(typeof body?.othersSeated === 'boolean' ? { othersSeated: body.othersSeated } : {}),
   };
 }
 
