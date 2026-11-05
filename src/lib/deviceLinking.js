@@ -58,6 +58,8 @@ const LinkArchiveDescriptorSchema = z.object({
   },
 );
 
+export const RITUALS_SPACE_ACCOUNT_RE = /^[0-9a-f]{64}$/;
+
 const TransferBundleSchema = z.object({
   v: z.number().int().positive().optional(),
   userId: z.string().min(1),
@@ -71,6 +73,10 @@ const TransferBundleSchema = z.object({
   historySnapshot: z.object({}).passthrough().nullish(),
   guildMetadataKeySnapshot: z.object({}).passthrough().nullish(),
   transcriptBlob: z.string().min(1).nullish(),
+  // Rituals fork (2026-11-05): the approving device's Rituals account marker
+  // (rituals_space_account). Optional so bundles from older approvers parse;
+  // when present it must be exactly 64 lowercase hex characters.
+  acct: z.string().regex(RITUALS_SPACE_ACCOUNT_RE).optional(),
 }).strict();
 
 function createDeviceLinkPayloadError(
@@ -535,6 +541,7 @@ export function generateLinkingCode() {
  *     transcriptBlobOmitted: boolean,
  *   } | null,
  *   exportedAt?: string,
+ *   acct?: string,
  * }} bundle
  * @returns {Uint8Array}
  */
@@ -550,6 +557,11 @@ export async function encodeTransferBundle(bundle) {
     rootPublicKey: bytesToBase64(bundle.rootPublicKey),
     archive: bundle.archive ?? null,
   };
+  // Rituals fork: carry the account marker only when it is well formed, so a
+  // corrupt local value never produces a bundle the new device must reject.
+  if (typeof bundle.acct === 'string' && RITUALS_SPACE_ACCOUNT_RE.test(bundle.acct)) {
+    payload.acct = bundle.acct;
+  }
   const jsonBytes = new TextEncoder().encode(JSON.stringify(payload));
   if (!supportsGzipCompression()) {
     return jsonBytes;
@@ -573,6 +585,7 @@ export async function encodeTransferBundle(bundle) {
  *   exportedAt: string,
  *   rootPrivateKey: Uint8Array,
  *   rootPublicKey: Uint8Array,
+ *   acct: string|null,
  *   historySnapshot: object|null,
  *   guildMetadataKeySnapshot: object|null,
  * }}
@@ -609,6 +622,8 @@ export async function decodeTransferBundle(bytes) {
     // ship history/metadata/transcript inline. The new device's
     // completeDeviceLink prefers `archive` when present.
     archive: parsed.archive ?? null,
+    // Rituals fork: approving device's account marker, or null when absent.
+    acct: parsed.acct ?? null,
     historySnapshot: parsed.historySnapshot ?? null,
     guildMetadataKeySnapshot: parsed.guildMetadataKeySnapshot ?? null,
     transcriptBlob: parsed.transcriptBlob
