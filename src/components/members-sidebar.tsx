@@ -279,7 +279,7 @@ function MemberRow({
               <ContextMenuSeparator />
               <ContextMenuItem variant="destructive" disabled>
                 <BanIcon />
-                Remove from space
+                Remove from Space
               </ContextMenuItem>
             </>
           ) : null}
@@ -300,7 +300,7 @@ function MemberRow({
             <AlertDialogHeader>
               <AlertDialogTitle>Kick {member.name}?</AlertDialogTitle>
               <AlertDialogDescription>
-                {member.name} will be removed from this space.
+                {member.name} will be removed from this Space.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <div className="flex flex-col gap-2">
