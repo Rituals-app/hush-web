@@ -856,6 +856,76 @@ export async function tagLocalPlaintext(db, messageId, channelId) {
 
 const TAG_SWEEP_PREFIX = 'rituals-tag-sweep:';
 
+/** How far a self-send's ack copy may trail its random-id row (user retries included). */
+const SELF_SEND_COPY_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** Allowed client/server clock skew the other way (the ack copy carries the server time). */
+const SELF_SEND_COPY_SKEW_MS = 10 * 60 * 1000;
+
+/**
+ * @param {string} plaintext
+ * @returns {string} the envelope in encodeEnvelopeV1 key order, or the raw text
+ */
+function canonicalPlaintext(plaintext) {
+  try {
+    const e = JSON.parse(plaintext);
+    if (!e || typeof e !== 'object' || e.v !== 1) return plaintext;
+    return JSON.stringify({
+      v: 1,
+      text: e.text,
+      ...(Array.isArray(e.attachments) && e.attachments.length ? { attachments: e.attachments } : {}),
+      ...(e.gif ? { gif: e.gif } : {}),
+      ...(e.replyTo ? { replyTo: e.replyTo } : {}),
+      ...(typeof e.editedAt === 'number' ? { editedAt: e.editedAt } : {}),
+    });
+  } catch {
+    return plaintext;
+  }
+}
+
+/**
+ * Rituals fork (2026-11-05): tag the random-id rows that self-sends wrote
+ * before the channel tag existed. Each send cached its plaintext under a
+ * client `crypto.randomUUID()` and, at the server ack, again under the real
+ * message id. Only the real id can be found in a Space's history, so the sweep
+ * never reaches the random-id copy. An untagged row with no sender is given
+ * the channel of a tagged row with the same envelope that was stored within
+ * a day after it (a few minutes before, for clock skew), when every such
+ * match is in one channel. Ambiguous rows are left alone. Only tags; never
+ * deletes.
+ *
+ * @param {IDBDatabase} db
+ * @returns {Promise<number>} rows tagged
+ */
+export async function tagSelfSendCopies(db) {
+  const rows = await getAll(db, 'localPlaintext');
+  /** @type {Map<string, Array<{ channelId: string, timestamp: number }>>} */
+  const taggedByText = new Map();
+  for (const row of rows) {
+    if (!row?.channelId || typeof row.plaintext !== 'string') continue;
+    const k = canonicalPlaintext(row.plaintext);
+    const list = taggedByText.get(k) ?? [];
+    list.push({ channelId: row.channelId, timestamp: row.timestamp ?? 0 });
+    taggedByText.set(k, list);
+  }
+  let tagged = 0;
+  for (const row of rows) {
+    const key = String(row?.key ?? '');
+    if (row?.channelId || row?.senderId || typeof row?.plaintext !== 'string') continue;
+    if (key.startsWith(TAG_SWEEP_PREFIX)) continue;
+    const at = row.timestamp ?? 0;
+    const channels = new Set(
+      (taggedByText.get(canonicalPlaintext(row.plaintext)) ?? [])
+        .filter((c) => c.timestamp - at <= SELF_SEND_COPY_WINDOW_MS && at - c.timestamp <= SELF_SEND_COPY_SKEW_MS)
+        .map((c) => c.channelId),
+    );
+    if (channels.size !== 1) continue;
+    await tagLocalPlaintext(db, key, [...channels][0]);
+    tagged++;
+  }
+  return tagged;
+}
+
+
 /**
  * Rituals fork (2026-11-05): what the legacy tag sweep needs to know.
  * `untagged`: ids of cached plaintexts with no channel; `tagged`: ids of rows

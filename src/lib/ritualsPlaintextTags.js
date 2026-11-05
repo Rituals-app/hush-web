@@ -8,7 +8,9 @@
  * this sweep pages through each of the Space's channels once and tags every
  * untagged message it finds there. It only tags; it never deletes, so nobody's
  * history changes. A channel is marked swept once its history is read to the
- * end, and the sweep does no network work when nothing is untagged.
+ * end, and the sweep does no network work when nothing is untagged. Self-send
+ * rows cached under a random client id are tagged with their real-id copy's
+ * channel (mlsStore.tagSelfSendCopies).
  */
 
 import * as mlsStore from './mlsStore';
@@ -40,12 +42,14 @@ export async function sweepLegacyPlaintextTags({
   transcriptRows = listTranscriptCacheEntries,
   maxPages = 40,
 }) {
+  // Random-id self-send copies whose real-id copy is already tagged.
+  let tagged = await mlsStore.tagSelfSendCopies(db);
   const state = await mlsStore.getLocalPlaintextTagState(db);
   const pending = new Set(state.untagged);
   for (const row of transcriptRows()) {
     if (row?.messageId && !row.channelId && !state.tagged.has(row.messageId)) pending.add(row.messageId);
   }
-  let tagged = 0;
+  const fromHistory = tagged;
   for (const channelId of channelIds) {
     if (!pending.size) break;
     if (state.swept.has(channelId)) continue;
@@ -87,5 +91,7 @@ export async function sweepLegacyPlaintextTags({
     }
     if (complete) await mlsStore.markPlaintextTagSweep(db, channelId);
   }
+  // Real-id copies tagged just now pull their random-id twins along.
+  if (tagged > fromHistory) tagged += await mlsStore.tagSelfSendCopies(db);
   return tagged;
 }
