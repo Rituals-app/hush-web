@@ -10,6 +10,7 @@
 
 import { recordClientDiagnostic } from './clientDiagnostics.js';
 import { parseWsMessage } from './wsSchemas.js';
+import { pageInstanceOrigin } from './ritualsSpaceInstance.js';
 
 const DEFAULT_WS_PATH = '/ws';
 const RECONNECT_BASE_MS = 1000;
@@ -41,7 +42,7 @@ export function createWsClient(opts) {
   const onReconnected = opts.onReconnected ?? null;
   let wsUrl = opts.url;
   if (!wsUrl && typeof location !== 'undefined') {
-    const base = location.origin.replace(/^http/, 'ws');
+    const base = pageInstanceOrigin().replace(/^http/, 'ws');
     wsUrl = `${base}${DEFAULT_WS_PATH}`;
   }
   if (!wsUrl) {
