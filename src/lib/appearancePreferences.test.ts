@@ -86,9 +86,10 @@ describe("appearancePreferences", () => {
     ).toBe(25)
   })
 
-  it("defaults new installs to dark theme + glass enabled at magnet point 2 (25)", () => {
+  it("defaults new installs to the system theme + glass enabled at magnet point 2 (25)", () => {
+    // Rituals fork: the default follows the device appearance.
     expect(normalizeAppearancePreferences(null)).toMatchObject({
-      theme: "dark",
+      theme: "system",
       glassEnabled: true,
       glassIntensity: 25,
       glassMaterial: "auto",

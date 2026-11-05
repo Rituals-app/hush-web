@@ -66,8 +66,11 @@ import { Label } from "@/components/ui/label"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button.tsx"
-import { HushLogo } from "@/components/brand/HushLogo"
 import { BottomDock } from "@/components/bottom-dock"
+import {
+  RitualsAboutDialog,
+  RitualsSidebarFooterLinks,
+} from "@/components/rituals/about-dialog"
 import type { UserMenuUser } from "@/components/user-menu"
 import {
   Sheet,
@@ -223,68 +226,21 @@ interface ChannelSidebarProps {
    *  confirmation dialog because the action cascades to nested
    *  channels server-side. */
   onDeleteCategory?: (categoryId: string) => Promise<void>
-  /** Create an invite for the active server. Returns the shareable URL. */
-  onCreateInvite?: () => Promise<string | null>
-  /** Whether the current user can perform admin actions (create/delete channel, invite). */
+  /** Whether the current user can perform admin actions (create/delete channel). */
   canAdministrate?: boolean
   /** Home/DM surfaces reuse this shell but must not expose server actions. */
   serverMenuEnabled?: boolean
-  /** Open the create-server dialog (mobile rail dropdown surfaces this since
-   *  the desktop bottom rail with [+]/Discover icons is not visible). */
-  onCreateServer?: () => void
-  /** Navigate to the discover-servers route. */
-  onDiscoverServers?: () => void
+  /** Rituals fork: opens Settings › Recovery phrase (the reminder's Save). */
+  onOpenRecoveryPhrase?: () => void
 }
+
+// Rituals fork: no Create server, Discover, Invite people, Leave or Delete
+// server entry points (Rituals owns a space's lifecycle and membership).
+// The upstream "About" (project links, version lines) became the Rituals
+// About dialog with the AGPL notice, reachable from the sidebar footer, the
+// space menu and the account menu.
 
 const CHANNELS_SECTION_LABEL = "Channels"
-
-/**
- * Two-line version readout for the About dialog.
- *
- * Renders `<v.x.y.z> hush-web` on the first line and, when running inside
- * the Electron renderer, `<v.x.y.z> hush-desktop` on the second line in
- * identical typography. Browser builds show only the web line.
- */
-interface DesktopBridge {
-  isDesktop?: boolean
-  getAppVersion?: () => Promise<string>
-}
-
-function AppVersionLines() {
-  const [desktopVersion, setDesktopVersion] = React.useState<string | null>(null)
-
-  React.useEffect(() => {
-    if (typeof window === "undefined") return
-    const api = (window as unknown as { hushDesktop?: DesktopBridge }).hushDesktop
-    if (!api || api.isDesktop !== true) return
-    if (typeof api.getAppVersion !== "function") return
-    let cancelled = false
-    api.getAppVersion()
-      .then((value: string) => {
-        if (cancelled) return
-        if (typeof value === "string" && value.length > 0) setDesktopVersion(value)
-      })
-      .catch(() => {
-        // Best-effort: a missing version simply hides the desktop line.
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  return (
-    <div className="flex flex-col items-center gap-0.5 font-mono text-[10px] text-muted-foreground/70">
-      <span>
-        v{APP_VERSION} <span className="text-muted-foreground/50">hush-web</span>
-      </span>
-      {desktopVersion && (
-        <span>
-          v{desktopVersion} <span className="text-muted-foreground/50">hush-desktop</span>
-        </span>
-      )}
-    </div>
-  )
-}
 
 export function ChannelSidebar({
   serverName,

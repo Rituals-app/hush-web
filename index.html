@@ -3,34 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>Hush - Yap. Privately</title>
-  <meta name="description" content="Private screen sharing. No limits, no tracking, no bullshit." />
-  <!-- Favicon and apple-touch-icon: set from system preference for first paint, then kept in sync by app (FaviconThemeSync) when data-theme is set -->
-  <link rel="icon" type="image/png" href="/favicon.png?v=hush-logo-v4" id="favicon">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=hush-logo-v4" id="apple-touch-icon">
-  <script>
-    (function(){
-      var dark = !window.matchMedia('(prefers-color-scheme: light)').matches;
-      var f = document.getElementById('favicon'); var a = document.getElementById('apple-touch-icon');
-      if (f) f.href = dark ? '/favicon.png?v=hush-logo-v4' : '/favicon-light.png?v=hush-logo-v4';
-      if (a) a.href = dark ? '/apple-touch-icon.png?v=hush-logo-v4' : '/apple-touch-icon-light.png?v=hush-logo-v4';
-    })();
-  </script>
-  <meta property="og:title" content="Hush - Yap. Privately">
-  <meta property="og:description" content="End-to-end encrypted servers, channels, voice, video and screen share. Self-hostable.">
-  <meta property="og:url" content="https://app.gethush.live">
-  <meta property="og:site_name" content="Hush">
+  <title>Rituals Space</title>
+  <meta name="description" content="A private space for the people on a shared Rituals task. Messages and calls are end-to-end encrypted." />
+  <!-- The Rituals mark. favicon.svg follows the OS appearance on its own (prefers-color-scheme inside the SVG). -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" id="favicon">
+  <link rel="alternate icon" type="image/png" href="/icon-192.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" id="apple-touch-icon">
+  <meta name="apple-mobile-web-app-title" content="Space">
+  <meta name="application-name" content="Rituals Space">
+  <meta property="og:title" content="Rituals Space">
+  <meta property="og:description" content="A private space for the people on a shared Rituals task.">
+  <meta property="og:url" content="https://space.rit.al">
+  <meta property="og:site_name" content="Rituals">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="/og.png">
-  <meta property="og:image:width" content="1200">
-  <meta property="og:image:height" content="630">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Hush - Yap. Privately">
-  <meta name="twitter:description" content="End-to-end encrypted servers, channels, voice, video and screen share. Self-hostable.">
-  <meta name="twitter:image" content="/og.png">
-  <!-- Browser chrome color - pinned to --hush-surface so it never auto-drifts with page content -->
-  <meta name="theme-color" media="(prefers-color-scheme: dark)"  content="#000000">
-  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F0EEE9">
+  <meta property="og:image" content="https://space.rit.al/icon-512.png">
+  <meta property="og:image:width" content="512">
+  <meta property="og:image:height" content="512">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Rituals Space">
+  <meta name="twitter:description" content="A private space for the people on a shared Rituals task.">
+  <meta name="twitter:image" content="https://space.rit.al/icon-512.png">
+  <!-- Browser chrome colour: the Rituals page tone (Bone in Light, Once in Dark). -->
+  <meta name="theme-color" media="(prefers-color-scheme: dark)"  content="#0F0F0F">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#EAE6E0">
+  <meta name="color-scheme" content="light dark">
 </head>
 <body>
   <div id="root"></div>

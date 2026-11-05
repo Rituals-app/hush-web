@@ -15,7 +15,6 @@
  */
 import * as React from "react"
 import { useNavigate, useParams } from "react-router-dom"
-import { toast } from "sonner"
 import {
   ScrollTextIcon,
   ShieldAlertIcon,
@@ -33,7 +32,6 @@ import {
 } from "@/components/system-channel-view"
 import { ServerRail, type RailSelection } from "@/components/server-rail"
 import { CheatSheet } from "@/components/cheat-sheet"
-import { ServerSettingsDialog } from "@/components/server-settings-dialog"
 import { UserSettingsDialog } from "@/components/user-settings-dialog"
 import { FavoritesView } from "@/components/favorites-view"
 import { CommandPalette } from "@/components/command-palette"
@@ -45,17 +43,6 @@ import {
 } from "@/components/ui/resizable"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip.tsx"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { RealChat } from "@/components/chat-real"
 import { VoiceChannelView } from "@/components/voice-channel-view"
 import { VoicePlaceholderView } from "@/components/voice/voice-placeholder-view"
@@ -69,18 +56,18 @@ import {
 } from "@/lib/instanceRuntimeConfig"
 import * as mlsStore from "@/lib/mlsStore"
 import { buildGuildRouteRef, parseGuildRouteRef } from "@/lib/slugify"
-import { buildGuildInviteLink } from "@/lib/inviteLinks"
-import { getActiveAuthInstanceUrlSync } from "@/lib/authInstanceStore"
 import {
   kickUser,
   createGuildChannel,
   deleteGuildChannel,
-  createGuildInvite,
-  createGuild,
-  leaveGuild,
-  deleteGuild,
   createOrFindDM,
 } from "@/lib/api"
+import {
+  RITUALS_HOME_URL,
+  isInRitualsHost,
+  postToRitualsHost,
+} from "@/lib/ritualsSpace"
+import { RitualsMark } from "@/components/brand/HushLogo"
 import type {
   MemberRole,
   ServerMember,
@@ -119,19 +106,13 @@ import {
   type ServerActionTarget,
 } from "./authenticated-app-server-actions"
 import { shouldLeaveVoiceAfterSelfRemoval } from "./authenticated-app-self-removal"
-import { ChangeAnnouncementDialog } from "@/components/change-announcement-dialog"
-import { useChangeAnnouncement } from "@/hooks/useChangeAnnouncement"
-import { useWhatsNewReopen } from "@/hooks/useWhatsNewReopen"
+
+// Rituals fork: a space's lifecycle belongs to Rituals (one space per shared
+// task, membership synced from the share). This shell therefore has no
+// Create server, Explore/discover, Create invite, Leave or Delete server,
+// no "What's new" announcements and no desktop update checks.
 
 const noopRefetch = async () => {}
-
-interface DesktopUpdateBridge {
-  isDesktop?: boolean
-  checkForDesktopUpdates?: () => Promise<{
-    phase?: string
-    error?: string | null
-  }>
-}
 
 interface FavoriteEntry {
   id: string
@@ -239,42 +220,6 @@ export function AuthenticatedApp() {
     await performLogout()
   }, [performLogout])
 
-  // Idle gate for the "What's new" popup. Stays false until the shell
-  // has mounted and the event loop reports an idle slice (or the
-  // fallback timer fires), so the dialog never interrupts the initial
-  // render burst, auth handoff, or vault unlock flows that may queue
-  // synchronous work on first paint.
-  const [isShellIdle, setIsShellIdle] = React.useState(false)
-  React.useEffect(() => {
-    type IdleHost = typeof window & {
-      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
-      cancelIdleCallback?: (handle: number) => void
-    }
-    const host = window as IdleHost
-    let idleHandle: number | undefined
-    let timeoutHandle: number | undefined
-    if (typeof host.requestIdleCallback === "function") {
-      idleHandle = host.requestIdleCallback(() => setIsShellIdle(true), {
-        timeout: 2000,
-      })
-    } else {
-      timeoutHandle = window.setTimeout(() => setIsShellIdle(true), 800)
-    }
-    return () => {
-      if (idleHandle !== undefined && typeof host.cancelIdleCallback === "function") {
-        host.cancelIdleCallback(idleHandle)
-      }
-      if (timeoutHandle !== undefined) {
-        window.clearTimeout(timeoutHandle)
-      }
-    }
-  }, [])
-
-  const isAuthenticatedUser = Boolean(user?.id)
-  const changeAnnouncement = useChangeAnnouncement({
-    isReady: isAuthenticatedUser && isShellIdle,
-  })
-  const whatsNewReopen = useWhatsNewReopen()
   const {
     getTokenForInstance,
     getWsClient,
@@ -282,7 +227,9 @@ export function AuthenticatedApp() {
     dmGuilds,
     connectedInstances,
     disconnectInstance,
+    guildsLoaded,
   } = useInstanceContext() as unknown as {
+    guildsLoaded: boolean
     getTokenForInstance: (url: string) => string | null
     getWsClient: (url: string) => unknown | null
     refreshGuilds: (instanceUrl: string) => Promise<void>
@@ -591,56 +538,9 @@ export function AuthenticatedApp() {
     [activeServer]
   )
 
-  const handleLeaveServer = React.useCallback(
-    async (target: ServerActionTarget) => {
-      const server = resolveServerForAction(servers, target)
-      if (!server?.raw.instanceUrl) return
-      const tk = getTokenForInstance(server.raw.instanceUrl)
-      if (!tk) return
-      try {
-        await leaveGuild(tk, server.id, server.raw.instanceUrl)
-        await refreshGuilds(server.raw.instanceUrl)
-        if (serverTargetsMatch(activeServerTarget, target)) navigate("/home")
-      } catch (err) {
-        console.error("leaveGuild failed", err)
-      }
-    },
-    [
-      servers,
-      getTokenForInstance,
-      refreshGuilds,
-      activeServerTarget,
-      navigate,
-    ]
-  )
-
-  const handleDeleteServer = React.useCallback(
-    async (target: ServerActionTarget) => {
-      const server = resolveServerForAction(servers, target)
-      if (!server?.raw.instanceUrl) return
-      const tk = getTokenForInstance(server.raw.instanceUrl)
-      if (!tk) return
-      try {
-        await deleteGuild(tk, server.id, server.raw.instanceUrl)
-        // Navigate away immediately so the confirmation dialog can
-        // close and the user is no longer mounted on the dead server.
-        // Refresh the guild list in the background, awaiting it kept
-        // the dialog open through a heavy authenticated-app re-render
-        // and made the UI feel frozen.
-        if (serverTargetsMatch(activeServerTarget, target)) navigate("/home")
-        void refreshGuilds(server.raw.instanceUrl).catch(() => {})
-      } catch (err) {
-        console.error("deleteGuild failed", err)
-      }
-    },
-    [
-      servers,
-      getTokenForInstance,
-      refreshGuilds,
-      activeServerTarget,
-      navigate,
-    ]
-  )
+  // Rituals fork: no Leave or Delete server here. People leave a space by
+  // leaving the shared task in Rituals; Rituals removes them (signed sync)
+  // and owns the space's lifecycle.
 
   // Role resolution per server: prefer the active server's full member list
   // (richest data), then the role propagated on the guild-list payload
@@ -684,141 +584,8 @@ export function AuthenticatedApp() {
     [activeServer, token, baseUrl, instanceUrl, refreshGuilds, navigate]
   )
 
-  const handleCreateInvite = React.useCallback(async (): Promise<string | null> => {
-    if (!activeServer || !token || !instanceUrl) return null
-    const result = (await createGuildInvite(token, activeServer.id, {}, baseUrl)) as {
-      code?: string
-      inviteCode?: string
-    }
-    const code = result.code ?? result.inviteCode
-    if (!code) return null
-    // Anchor on the instance public origin; `window.location.origin` is `app://localhost` on desktop.
-    return buildGuildInviteLink(new URL(instanceUrl).origin, instanceUrl, code, null)
-  }, [activeServer, token, baseUrl, instanceUrl])
-
-  const canCheckForDesktopUpdates = React.useMemo(() => {
-    if (typeof window === "undefined") return false
-    const api = (window as unknown as { hushDesktop?: DesktopUpdateBridge }).hushDesktop
-    return api?.isDesktop === true && typeof api.checkForDesktopUpdates === "function"
-  }, [])
-
-  const handleCheckForDesktopUpdates = React.useCallback(async () => {
-    const api = (window as unknown as { hushDesktop?: DesktopUpdateBridge }).hushDesktop
-    if (!api || api.isDesktop !== true || typeof api.checkForDesktopUpdates !== "function") {
-      return
-    }
-    try {
-      const state = await api.checkForDesktopUpdates()
-      if (state.phase === "skipped" && state.error === "no-update") {
-        toast.success("System is up to date.")
-        return
-      }
-      if (state.phase === "skipped") {
-        toast.message("Update check skipped. Try again when the network is available.")
-        return
-      }
-      if (state.phase === "ready") {
-        toast.message("Update ready. Restart from Preferences > General.")
-        return
-      }
-      if (
-        state.phase === "checking" ||
-        state.phase === "downloading" ||
-        state.phase === "preparing"
-      ) {
-        toast.message("Desktop update found. Downloading...")
-        return
-      }
-      if (state.phase === "downloaded") {
-        toast.message("Restarting to finish update...")
-      }
-    } catch {
-      toast.error("Could not check for updates.")
-    }
-  }, [])
-
-  const [isCreateServerOpen, setIsCreateServerOpen] = React.useState(false)
-  const [createServerName, setCreateServerName] = React.useState("")
-  const [createServerBusy, setCreateServerBusy] = React.useState(false)
-  const [createServerError, setCreateServerError] =
-    React.useState<string | null>(null)
-
-  const handleOpenServerSettings = React.useCallback(
-    (target: ServerActionTarget) => {
-      // Store the full target identity so the dialog can disambiguate
-      // same-id servers across instances. A bare id is ambiguous in a
-      // federated/multi-instance client.
-      setSettingsTarget(target)
-      setIsServerSettingsOpen(true)
-    },
-    []
-  )
-
-  const openCreateServerDialog = React.useCallback(() => {
-    setCreateServerName("")
-    setCreateServerError(null)
-    setIsCreateServerOpen(true)
-  }, [])
-
-  const handleCreateServer = React.useCallback(async () => {
-    const name = createServerName.trim()
-    if (!name) {
-      setCreateServerError("Server name required")
-      return
-    }
-
-    const targetInstanceUrl =
-      activeServer?.raw.instanceUrl ?? getActiveAuthInstanceUrlSync()
-    if (!targetInstanceUrl) {
-      setCreateServerError("No active instance available")
-      return
-    }
-    // Token lookup races with `useInstances` hydration on a fresh sign-in
-    // or reconnect: the instance entry isn't in `instancesRef` yet, so
-    // `getTokenForInstance` returns null even though the user has a
-    // valid session. Brief wait + retry covers the common race without
-    // forcing the user to dismiss + re-trigger the dialog.
-    let tk = getTokenForInstance(targetInstanceUrl)
-    if (!tk) {
-      await new Promise((r) => setTimeout(r, 300))
-      tk = getTokenForInstance(targetInstanceUrl)
-    }
-    if (!tk) {
-      setCreateServerError("Session not ready. Please try again in a moment.")
-      return
-    }
-
-    setCreateServerBusy(true)
-    setCreateServerError(null)
-    try {
-      const server = (await createGuild(
-        tk,
-        undefined,
-        undefined,
-        targetInstanceUrl,
-        name
-      )) as { id: string }
-      await refreshGuilds(targetInstanceUrl)
-      const host = new URL(targetInstanceUrl).host
-      // Land on the new server root; AuthenticatedApp's effect below will
-      // forward to its first text channel once the channel list resolves.
-      navigate(`/${host}/${buildGuildRouteRef(name, server.id)}`)
-      setCreateServerName("")
-      setIsCreateServerOpen(false)
-    } catch (err) {
-      setCreateServerError(
-        err instanceof Error ? err.message : "Failed to create server"
-      )
-    } finally {
-      setCreateServerBusy(false)
-    }
-  }, [
-    activeServer,
-    createServerName,
-    getTokenForInstance,
-    refreshGuilds,
-    navigate,
-  ])
+  // Rituals fork: no Create invite, no Create server and no desktop update
+  // check (see the note at the top of this file).
 
   const allChannels = React.useMemo(
     (): ShellChannel[] => [
@@ -901,10 +668,37 @@ export function AuthenticatedApp() {
   )
   const [isCommandOpen, setIsCommandOpen] = React.useState(false)
   const [isCheatSheetOpen, setIsCheatSheetOpen] = React.useState(false)
-  const [isServerSettingsOpen, setIsServerSettingsOpen] = React.useState(false)
-  const [settingsTarget, setSettingsTarget] =
-    React.useState<ServerActionTarget | null>(null)
   const [isUserSettingsOpen, setIsUserSettingsOpen] = React.useState(false)
+  // Rituals fork: settings can open straight on a section (the recovery
+  // phrase reminder opens "Recovery phrase").
+  const [userSettingsSection, setUserSettingsSection] = React.useState<
+    string | undefined
+  >(undefined)
+  const openUserSettings = React.useCallback((sectionId?: string) => {
+    setUserSettingsSection(sectionId)
+    setIsUserSettingsOpen(true)
+  }, [])
+
+  // Rituals fork: the page title names the open space, and the native
+  // Rituals app (in-app web view) hears when the space is shown and what
+  // it is called. A space with no readable name falls back to its id in
+  // the adapter, which is never sent as a title.
+  const activeSpaceName =
+    activeServer && activeServer.name && activeServer.name !== activeServer.id
+      ? activeServer.name.trim()
+      : ""
+  React.useEffect(() => {
+    document.title = activeSpaceName ? `${activeSpaceName} · Rituals` : "Rituals Space"
+  }, [activeSpaceName])
+  const hostReadyPostedRef = React.useRef(false)
+  React.useEffect(() => {
+    if (!activeServer || hostReadyPostedRef.current) return
+    hostReadyPostedRef.current = true
+    postToRitualsHost({ type: "ready" })
+  }, [activeServer])
+  React.useEffect(() => {
+    if (activeSpaceName) postToRitualsHost({ type: "title", title: activeSpaceName })
+  }, [activeSpaceName])
   const [favorites, setFavorites] = React.useState<FavoriteEntry[]>([])
   const favoriteIds = React.useMemo(
     () => new Set(favorites.map((f) => f.messageId)),
@@ -1521,6 +1315,12 @@ export function AuthenticatedApp() {
       onAddFavorite={handleAddFavorite}
       onRemoveFavorite={handleRemoveFavorite}
     />
+  ) : parsedGuild.guildId &&
+    guildsLoaded &&
+    !dmGuilds.some((g) => g.id === parsedGuild.guildId) ? (
+    // Rituals fork: a space link this identity is not (or no longer) in.
+    // Upstream showed an empty "DM" view here; say what happened instead.
+    <SpaceUnavailableView />
   ) : (
     <ChannelView
       channelId={params.channelSlug ?? ""}
@@ -1571,11 +1371,6 @@ export function AuthenticatedApp() {
         activeRailTarget={activeServerTarget ?? "home"}
         onSelect={handleSelectRail}
         getServerRole={getServerRole}
-        onLeaveServer={handleLeaveServer}
-        onDeleteServer={handleDeleteServer}
-        onOpenServerSettings={handleOpenServerSettings}
-        onCreateServer={openCreateServerDialog}
-        onDiscoverServers={() => navigate("/explore")}
       />
       <SidebarProvider
         data-desktop-chrome="authenticated-shell"
@@ -1585,7 +1380,7 @@ export function AuthenticatedApp() {
           ? activeServer
             ? <ChannelSidebar
                 serverName={activeServer.name}
-                serverPlan="Server"
+                serverPlan="Space"
                 systemChannels={sidebarSystemChannels}
                 categories={categories}
                 channels={channelsWithVoicePresence}
@@ -1598,22 +1393,13 @@ export function AuthenticatedApp() {
                 activeRailId={activeServer.id}
                 onSelectRail={handleSelectRail}
                 voice={voiceProps}
-                onOpenServerSettings={() => {
-                  if (activeServer)
-                    handleOpenServerSettings({
-                      id: activeServer.id,
-                      instanceUrl: activeServer.raw.instanceUrl,
-                    })
-                }}
-                onOpenUserSettings={() => setIsUserSettingsOpen(true)}
+                onOpenUserSettings={() => openUserSettings()}
+                onOpenRecoveryPhrase={() => openUserSettings("recovery")}
                 onSignOut={handleSignOut}
                 onCreateChannel={handleCreateChannel}
                 onDeleteChannel={handleDeleteChannel}
                 onDeleteCategory={handleDeleteChannel}
-                onCreateInvite={handleCreateInvite}
                 canAdministrate={canAdministrate}
-                onCreateServer={openCreateServerDialog}
-                onDiscoverServers={() => navigate("/explore")}
               />
             : <HomeSidebar
                 user={sidebarUser}
@@ -1629,11 +1415,10 @@ export function AuthenticatedApp() {
                   navigate(`/home/${id}`)
                 }}
                 voice={voiceProps}
-                onOpenUserSettings={() => setIsUserSettingsOpen(true)}
+                onOpenUserSettings={() => openUserSettings()}
+                onOpenRecoveryPhrase={() => openUserSettings("recovery")}
                 onSignOut={handleSignOut}
                 directMessages={homeDMs}
-                onCreateServer={openCreateServerDialog}
-                onDiscoverServers={() => navigate("/explore")}
               />
           : null}
         <ResizablePanelGroup
@@ -1650,7 +1435,7 @@ export function AuthenticatedApp() {
               {activeServer ? (
                 <ChannelSidebar
                   serverName={activeServer.name}
-                  serverPlan="Server"
+                  serverPlan="Space"
                   systemChannels={sidebarSystemChannels}
                   categories={categories}
                   channels={channelsWithVoicePresence}
@@ -1663,22 +1448,13 @@ export function AuthenticatedApp() {
                   activeRailId={activeServer.id}
                   onSelectRail={handleSelectRail}
                   voice={voiceProps}
-                  onOpenServerSettings={() => {
-                    if (activeServer)
-                      handleOpenServerSettings({
-                        id: activeServer.id,
-                        instanceUrl: activeServer.raw.instanceUrl,
-                      })
-                  }}
-                  onOpenUserSettings={() => setIsUserSettingsOpen(true)}
+                  onOpenUserSettings={() => openUserSettings()}
+                  onOpenRecoveryPhrase={() => openUserSettings("recovery")}
                   onSignOut={handleSignOut}
                   onCreateChannel={handleCreateChannel}
                   onDeleteChannel={handleDeleteChannel}
                   onDeleteCategory={handleDeleteChannel}
-                  onCreateInvite={handleCreateInvite}
                   canAdministrate={canAdministrate}
-                  onCreateServer={openCreateServerDialog}
-                  onDiscoverServers={() => navigate("/explore")}
                 />
               ) : (
                 <HomeSidebar
@@ -1695,7 +1471,8 @@ export function AuthenticatedApp() {
                     navigate(`/home/${id}`)
                   }}
                   voice={voiceProps}
-                  onOpenUserSettings={() => setIsUserSettingsOpen(true)}
+                  onOpenUserSettings={() => openUserSettings()}
+                  onOpenRecoveryPhrase={() => openUserSettings("recovery")}
                   onSignOut={handleSignOut}
                   directMessages={homeDMs}
                 />
@@ -1783,8 +1560,6 @@ export function AuthenticatedApp() {
         onToggleMute={handleToggleMute}
         onGoHome={() => navigate("/home")}
         onOpenCheatSheet={() => setIsCheatSheetOpen(true)}
-        onDiscoverServers={() => navigate("/explore")}
-        onCreateServer={openCreateServerDialog}
         onCreateChannel={
           activeServer && canAdministrate
             ? (kind) =>
@@ -1795,98 +1570,14 @@ export function AuthenticatedApp() {
                 )
             : undefined
         }
-        onOpenSettings={() => setIsUserSettingsOpen(true)}
-        onCheckForUpdates={
-          canCheckForDesktopUpdates ? handleCheckForDesktopUpdates : undefined
-        }
+        onOpenSettings={() => openUserSettings()}
         onSignOut={handleSignOut}
       />
       <CheatSheet open={isCheatSheetOpen} onOpenChange={setIsCheatSheetOpen} />
-      <Dialog open={isCreateServerOpen} onOpenChange={setIsCreateServerOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Create server</DialogTitle>
-            <DialogDescription>
-              Create a server on your active Hush instance.
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            className="flex flex-col gap-3 py-2"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void handleCreateServer()
-            }}
-          >
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="create-server-name">Server name</Label>
-              <Input
-                id="create-server-name"
-                value={createServerName}
-                onChange={(event) => {
-                  setCreateServerName(event.target.value)
-                  setCreateServerError(null)
-                }}
-                disabled={createServerBusy}
-                placeholder="My server"
-              />
-            </div>
-            {createServerError ? (
-              <div className="text-sm text-destructive">
-                {createServerError}
-              </div>
-            ) : null}
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setIsCreateServerOpen(false)}
-                disabled={createServerBusy}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={createServerBusy || !createServerName.trim()}
-              >
-                {createServerBusy ? "Creating..." : "Create server"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-      {(() => {
-        // Resolve the target by BOTH id and instanceUrl. If the
-        // target no longer exists in `servers` (e.g. instance
-        // disconnected after the dialog opened), we must NOT expose
-        // owner-only destructive actions, a bare-id fallback could
-        // act on a foreign instance with a colliding id.
-        const targetServer = resolveServerForAction(servers, settingsTarget)
-        const targetRole = settingsTarget
-          ? getServerRole(settingsTarget)
-          : undefined
-        const canDelete =
-          Boolean(targetServer) &&
-          Boolean(settingsTarget) &&
-          targetRole === "owner"
-        return (
-          <ServerSettingsDialog
-            open={isServerSettingsOpen}
-            onOpenChange={setIsServerSettingsOpen}
-            serverName={targetServer?.name ?? activeServer?.name ?? "Server"}
-            onDeleteServer={
-              canDelete
-                ? async () => {
-                    await handleDeleteServer(settingsTarget!)
-                    setIsServerSettingsOpen(false)
-                  }
-                : undefined
-            }
-          />
-        )
-      })()}
       <UserSettingsDialog
         open={isUserSettingsOpen}
         onOpenChange={setIsUserSettingsOpen}
+        initialSectionId={userSettingsSection}
         account={
           user
             ? {
@@ -1906,17 +1597,38 @@ export function AuthenticatedApp() {
           setIsUserSettingsOpen(false)
         }}
       />
-      <ChangeAnnouncementDialog
-        entry={changeAnnouncement.entry}
-        onDismiss={changeAnnouncement.dismiss}
-      />
-      {/* Manual re-open path: shows the latest note again without affecting
-          the auto-show seen state. Only one dialog is open at a time. */}
-      <ChangeAnnouncementDialog
-        entry={whatsNewReopen.entry}
-        onDismiss={whatsNewReopen.close}
-      />
     </TooltipProvider>
+  )
+}
+
+/**
+ * Rituals fork: shown for a space route this identity cannot open (not a
+ * member any more, or the link belongs to someone else's device).
+ */
+function SpaceUnavailableView() {
+  const inHost = isInRitualsHost()
+  React.useEffect(() => {
+    postToRitualsHost({ type: "error", reason: "not_member" })
+  }, [])
+  return (
+    <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
+      <SidebarTrigger className="absolute top-2 left-2 md:hidden" />
+      <RitualsMark className="size-10 text-muted-foreground" />
+      <div className="flex max-w-sm flex-col gap-1">
+        <h2 className="text-lg font-semibold">This space isn&apos;t open here</h2>
+        <p className="text-sm text-muted-foreground">
+          Open it again from the shared task in Rituals.
+        </p>
+      </div>
+      {inHost ? null : (
+        <a
+          href={RITUALS_HOME_URL}
+          className="text-sm font-medium underline-offset-4 hover:underline"
+        >
+          Open Rituals
+        </a>
+      )}
+    </div>
   )
 }
 
@@ -1936,10 +1648,9 @@ function HomeSidebar({
   onSelectChannel,
   voice,
   onOpenUserSettings,
+  onOpenRecoveryPhrase,
   onSignOut,
   directMessages,
-  onCreateServer,
-  onDiscoverServers,
 }: {
   user: React.ComponentProps<typeof ChannelSidebar>["user"]
   railEntries: { id: string; name: string; initials: string }[]
@@ -1949,15 +1660,14 @@ function HomeSidebar({
   onSelectChannel: (id: string) => void
   voice?: React.ComponentProps<typeof ChannelSidebar>["voice"]
   onOpenUserSettings?: () => void
+  onOpenRecoveryPhrase?: () => void
   onSignOut?: () => void | Promise<void>
   directMessages: HomeDM[]
-  onCreateServer?: () => void
-  onDiscoverServers?: () => void
 }) {
   return (
     <ChannelSidebar
       serverName="Home"
-      serverPlan="Sweet Home"
+      serverPlan="Your spaces and messages"
       systemChannels={HOME_SYSTEM_CHANNELS}
       directMessages={directMessages}
       categories={[] as ChannelCategory[]}
@@ -1970,10 +1680,9 @@ function HomeSidebar({
       onSelectRail={onSelectRail}
       voice={voice}
       onOpenUserSettings={onOpenUserSettings}
+      onOpenRecoveryPhrase={onOpenRecoveryPhrase}
       onSignOut={onSignOut}
       serverMenuEnabled={false}
-      onCreateServer={onCreateServer}
-      onDiscoverServers={onDiscoverServers}
     />
   )
 }

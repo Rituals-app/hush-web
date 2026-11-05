@@ -40,6 +40,8 @@ export const NEVER_CACHE_URL_PATTERNS = Object.freeze([
   // Attachment presign + download endpoints (server-relative paths).
   /\/api\/.*\/attachments\//,
   /\/api\/attachments\//,
+  // Rituals fork: AGPL source tarballs served by the host edge at /source/.
+  /^\/source(?:\/|$)/,
 ]);
 
 /**
@@ -74,9 +76,11 @@ export const APP_SHELL_PRECACHE_PATTERNS = Object.freeze([
   /^index\.html$/,
   /^manifest\.webmanifest$/,
   /^favicon(?:-light)?\.png$/,
+  /^favicon\.svg$/,
   /^apple-touch-icon(?:-light)?\.png$/,
   /^icon-(?:192|512)(?:-light)?\.png$/,
   /^hush-logo\.svg$/,
+  /^rituals-mark\.svg$/,
   /^assets\/index-[A-Za-z0-9_-]+\.(?:js|css)$/,
   /^assets\/vendor-react-[A-Za-z0-9_-]+\.js$/,
   /^assets\/hush_crypto(?:_bg)?-[A-Za-z0-9_-]+\.(?:js|wasm)$/,
@@ -112,6 +116,9 @@ export const NAVIGATE_FALLBACK_DENYLIST = Object.freeze([
   /^\/ws(\?|$)/,
   /^\/livekit\//,
   /^\/admin(?:\/|$)/,
+  // Rituals fork: the AGPL source listing must reach the server, never the
+  // SPA shell (the About dialog links here).
+  /^\/source(?:\/|$)/,
 ]);
 
 /**
@@ -143,6 +150,7 @@ export const RUNTIME_CACHING = Object.freeze([
         /^\/admin(?:\/|$)/,
         /\/api\/.*\/attachments\//,
         /\/api\/attachments\//,
+        /^\/source(?:\/|$)/,
       ];
       for (let i = 0; i < denyPatterns.length; i++) {
         if (denyPatterns[i].test(url.pathname)) return false;
@@ -166,8 +174,31 @@ export const RUNTIME_CACHING = Object.freeze([
  * — auto-activation could swap the JS bundle out from under a tab that is
  * mid-flight on an MLS commit or vault operation.
  */
+/**
+ * Web app manifest for the Rituals Space build (Rituals fork): the product
+ * is "Space" inside Rituals, so the installed name, icons and colours follow
+ * Rituals (Bone page tone, the Rituals mark).
+ */
+export const RITUALS_SPACE_MANIFEST = Object.freeze({
+  name: "Rituals Space",
+  short_name: "Space",
+  description:
+    "A private space for the people on a shared Rituals task. Messages and calls are end-to-end encrypted.",
+  start_url: "/",
+  scope: "/",
+  display: "standalone",
+  background_color: "#EAE6E0",
+  theme_color: "#EAE6E0",
+  icons: [
+    { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+    { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+    { src: "/favicon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+  ],
+});
+
 export const PWA_OPTIONS = Object.freeze({
   registerType: "prompt",
+  manifest: RITUALS_SPACE_MANIFEST,
   injectRegister: null, // we register manually from src/lib/pwaUpdate.js
   // Do NOT enable PWA in dev. dev runs with the source modules + HMR; an
   // active SW would intercept module requests and complicate debugging.

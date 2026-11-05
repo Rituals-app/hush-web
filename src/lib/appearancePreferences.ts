@@ -86,7 +86,8 @@ const GLASS_MAGNET_THRESHOLD = 1
 export const GLASS_DEFAULT_MATERIAL: GlassMaterial = "auto"
 
 export const DEFAULT_APPEARANCE_PREFERENCES: AppearancePreferences = {
-  theme: "dark",
+  // Rituals fork: follow the device appearance, as Rituals does.
+  theme: "system",
   glassEnabled: true,
   glassIntensity: GLASS_INTENSITY_DEFAULT,
   glassMaterial: GLASS_DEFAULT_MATERIAL,

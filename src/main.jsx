@@ -1,3 +1,5 @@
+// Rituals fork: must stay the first import (strips `/space#t=` at once).
+import './lib/ritualsSpaceBoot.js';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
@@ -13,7 +15,6 @@ import {
   markDesktopShellDocument,
   signalDesktopRendererReady,
 } from './hooks/useDesktopShell.js';
-import '@fontsource-variable/geist';
 import './styles/global.css';
 
 /* global __HUSH_DEV_DEBUG__, __HUSH_DEBUG_TOOLBAR__, __HUSH_ERUDA__ */

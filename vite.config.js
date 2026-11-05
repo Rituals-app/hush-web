@@ -61,7 +61,9 @@ export default defineConfig(({ mode }) => ({
   // Only these env prefixes are allowed to reach the client bundle. Local
   // debug flags such as VITE_ERUDA / VITE_DEBUG_TOOLBAR are consumed below as
   // build-time constants and must never appear in production assets.
-  envPrefix: ['VITE_API_', 'VITE_LIVEKIT_'],
+  // Rituals fork: VITE_RITUALS_* carries only public build facts (the AGPL
+  // source links and the source commit shown in the About dialog).
+  envPrefix: ['VITE_API_', 'VITE_LIVEKIT_', 'VITE_RITUALS_'],
   define: {
     __HUSH_DEV_DEBUG__: JSON.stringify(mode !== 'production'),
     __HUSH_DEBUG_TOOLBAR__: JSON.stringify(

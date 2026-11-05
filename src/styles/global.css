@@ -1,7 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+/* Rituals fork: Rituals sets type in the platform's own faces (SF Pro Text /
+   Rounded through the system families), so no web font is downloaded. */
 @import "@livekit/components-styles";
 @plugin "@tailwindcss/typography";
 @source "../node_modules/streamdown/dist";
@@ -694,8 +695,12 @@ html, body {
 }
 
 @theme inline {
-    --font-heading: var(--font-sans);
-    --font-sans: 'Geist Variable', sans-serif;
+    /* Rituals type (app/rituals-tokens.css in the Rituals web app): system
+       text faces for body, the rounded system face for headings, the system
+       monospace for code. */
+    --font-heading: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif;
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -738,77 +743,93 @@ html, body {
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Rituals fork: the palette follows Rituals (app/rituals-tokens.css in the
+   Rituals web app). Light is "Bone" (a warm bone page, brighter bone cards),
+   Dark is "Once" (a near-black page, charcoal cards). Labels and controls
+   use the monotone accent: ink on Bone, pale grey on Once. The page tone is
+   --sidebar (rail, channel column), the raised cards are --card and
+   --background (channel list card, main panel, auth cards). */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --destructive-foreground: oklch(0.985 0 0);
-    --success: oklch(0.62 0.17 150);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
+    --background: #F8F4EE;
+    --foreground: #181516;
+    --card: #F8F4EE;
+    --card-foreground: #181516;
+    --popover: #F8F4EE;
+    --popover-foreground: #181516;
+    --primary: #181516;
+    --primary-foreground: #F8F4EE;
+    --secondary: #E3DFD9;
+    --secondary-foreground: #181516;
+    --muted: #E3DFD9;
+    --muted-foreground: #4D4943;
+    --accent: color-mix(in srgb, #181516 8%, transparent);
+    --accent-foreground: #181516;
+    --destructive: #9D4538;
+    --destructive-foreground: #F8F4EE;
+    --success: #43664A;
+    --border: #DDD9D3;
+    --input: #DDD9D3;
+    --ring: color-mix(in srgb, #181516 60%, transparent);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
-    --radius: 0.5rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --radius: 0.75rem;
+    --sidebar: #EAE6E0;
+    --sidebar-foreground: #181516;
+    --sidebar-primary: #181516;
+    --sidebar-primary-foreground: #F8F4EE;
+    --sidebar-accent: color-mix(in srgb, #181516 8%, transparent);
+    --sidebar-accent-foreground: #181516;
+    --sidebar-border: #DDD9D3;
+    --sidebar-ring: color-mix(in srgb, #181516 60%, transparent);
+    color-scheme: light;
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --destructive-foreground: oklch(0.985 0 0);
-    --success: oklch(0.7 0.18 150);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
+    --background: #1C1C1C;
+    --foreground: #FFFFFF;
+    --card: #1C1C1C;
+    --card-foreground: #FFFFFF;
+    --popover: #212121;
+    --popover-foreground: #FFFFFF;
+    --primary: #D0D0D0;
+    --primary-foreground: #0F0F0F;
+    --secondary: #303030;
+    --secondary-foreground: #FFFFFF;
+    --muted: #292929;
+    --muted-foreground: #929292;
+    --accent: color-mix(in srgb, #FFFFFF 8%, transparent);
+    --accent-foreground: #FFFFFF;
+    --destructive: #F3AD9C;
+    --destructive-foreground: #0F0F0F;
+    --success: #B0D2AD;
+    --border: #2C2C2C;
+    --input: #2C2C2C;
+    --ring: color-mix(in srgb, #D0D0D0 74%, transparent);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --sidebar: #0F0F0F;
+    --sidebar-foreground: #FFFFFF;
+    --sidebar-primary: #D0D0D0;
+    --sidebar-primary-foreground: #0F0F0F;
+    --sidebar-accent: color-mix(in srgb, #FFFFFF 8%, transparent);
+    --sidebar-accent-foreground: #FFFFFF;
+    --sidebar-border: #2C2C2C;
+    --sidebar-ring: color-mix(in srgb, #D0D0D0 74%, transparent);
+    color-scheme: dark;
+}
+
+/* Rituals fork: headings use the rounded system face, like Rituals titles.
+   In the base layer so utilities (font-mono, font-sans) still win. */
+@layer base {
+  h1, h2, h3, [data-slot="dialog-title"], [data-slot="card-title"] {
+    font-family: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif;
+  }
 }
 
 @layer base {

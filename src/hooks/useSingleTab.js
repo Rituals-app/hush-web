@@ -46,13 +46,23 @@ function getTabId() {
  * Degrades gracefully when BroadcastChannel is unavailable (private-mode
  * browsers or very old environments): allows all tabs to proceed normally.
  *
+ * Rituals fork: `preferThisTab` (a Rituals space entry: someone just tapped
+ * the people on a shared task) takes the session over at once instead of
+ * pinging, so the newest entry wins and the older tab shows the blocked
+ * view. Takeovers carry a timestamp; a tab ignores a takeover older than
+ * its own, so two near-simultaneous entries settle on the newer one rather
+ * than blocking each other.
+ *
+ * @param {{ preferThisTab?: boolean }} [options]
  * @returns {{ isBlockedTab: boolean, takeOver: () => void }}
  */
-export function useSingleTab() {
+export function useSingleTab({ preferThisTab = false } = {}) {
   const [isBlockedTab, setIsBlockedTab] = useState(false);
   const channelRef = useRef(null);
   const isPrimaryRef = useRef(false);
   const tabIdRef = useRef(getTabId());
+  const takeoverAtRef = useRef(0);
+  const preferThisTabRef = useRef(preferThisTab);
 
   useEffect(() => {
     let channel;
@@ -65,15 +75,10 @@ export function useSingleTab() {
     channelRef.current = channel;
 
     const tabId = tabIdRef.current;
-
-    // Timeout handle for the 500ms ping window
-    const timeoutId = setTimeout(() => {
-      // No session_active received → we are the primary tab
-      isPrimaryRef.current = true;
-    }, PING_TIMEOUT_MS);
+    let timeoutId = null;
 
     channel.onmessage = (event) => {
-      const { type, tabId: senderTabId } = event.data ?? {};
+      const { type, tabId: senderTabId, at } = event.data ?? {};
 
       if (type === 'session_ping' && isPrimaryRef.current) {
         // An existing (primary) tab responds to a new tab's ping
@@ -85,25 +90,49 @@ export function useSingleTab() {
         // If the responder has the same tabId, it's the pre-refresh version
         // of this same tab - ignore it, this is a refresh not a second tab.
         if (senderTabId === tabId) return;
+        // A tab that just took over keeps the session.
+        if (takeoverAtRef.current) return;
 
         // Different tabId - genuine second tab detected
-        clearTimeout(timeoutId);
+        if (timeoutId != null) clearTimeout(timeoutId);
         setIsBlockedTab(true);
         return;
       }
 
       if (type === 'session_takeover') {
+        if (senderTabId === tabId) return;
+        const theirAt = Number(at) || 0;
+        const ours = takeoverAtRef.current;
+        // Ignore a takeover older than ours (ties go to the larger tab id).
+        if (ours && theirAt && (theirAt < ours || (theirAt === ours && String(senderTabId) < tabId))) {
+          return;
+        }
         // Another tab is claiming the session - yield
+        takeoverAtRef.current = 0;
         isPrimaryRef.current = false;
         setIsBlockedTab(true);
       }
     };
 
-    // Announce ourselves: ask whether any existing tab is already running
-    channel.postMessage({ type: 'session_ping', tabId });
+    if (preferThisTabRef.current) {
+      // Rituals space entry: claim the session now.
+      const nowAt = Date.now();
+      takeoverAtRef.current = nowAt;
+      isPrimaryRef.current = true;
+      channel.postMessage({ type: 'session_takeover', tabId, at: nowAt });
+    } else {
+      // Timeout handle for the 500ms ping window
+      timeoutId = setTimeout(() => {
+        // No session_active received → we are the primary tab
+        isPrimaryRef.current = true;
+      }, PING_TIMEOUT_MS);
+
+      // Announce ourselves: ask whether any existing tab is already running
+      channel.postMessage({ type: 'session_ping', tabId });
+    }
 
     return () => {
-      clearTimeout(timeoutId);
+      if (timeoutId != null) clearTimeout(timeoutId);
       channel.onmessage = null;
       channel.close();
       channelRef.current = null;
@@ -114,8 +143,10 @@ export function useSingleTab() {
   // Sends session_takeover to all other tabs, then unblocks this tab.
   const takeOver = useCallback(() => {
     const ch = channelRef.current;
+    const nowAt = Date.now();
+    takeoverAtRef.current = nowAt;
     if (ch) {
-      ch.postMessage({ type: 'session_takeover' });
+      ch.postMessage({ type: 'session_takeover', tabId: tabIdRef.current, at: nowAt });
     }
     isPrimaryRef.current = true;
     setIsBlockedTab(false);

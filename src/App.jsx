@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Routes, Route, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { InstanceProvider, useInstanceContext } from './contexts/InstanceContext';
@@ -11,41 +11,32 @@ import { DesktopWindowFloorSync } from './components/desktop/DesktopWindowFloorS
 import { useSingleTab } from './hooks/useSingleTab';
 import { useDesktopShell } from './hooks/useDesktopShell';
 import { buildGuildRouteRef } from './lib/slugify';
+import { hasPendingSpaceEntry } from './lib/ritualsSpace';
 import { Toaster } from './components/ui/sonner';
 import { UpdateRequiredDialog } from './components/UpdateRequiredDialog';
-import { StaleServerBanner } from './components/StaleServerBanner';
-import { StaleServerDesktopDialog } from './components/desktop/StaleServerDesktopDialog';
-import { DesktopManualUpdatePrompt } from './components/desktop/DesktopManualUpdatePrompt';
 import { E2eTestAuthBridge } from './components/dev/E2eTestAuthBridge.jsx';
+
+// Rituals fork: removed from the route trees and the shell, because Rituals
+// owns a space's lifecycle and ships client and server together: the
+// roadmap page, guild discovery (/explore), invite links (/invite, /join),
+// the desktop manual-update prompt and the outdated-server banners.
 
 const UnauthenticatedShell = lazy(() =>
   import('./components/auth/unauthenticated-shell').then((m) => ({
     default: m.UnauthenticatedShell,
   }))
 );
-const Invite = lazy(() => import('./pages/Invite'));
 const LinkDevice = lazy(() => import('./pages/LinkDevice.jsx'));
-const RoadmapPage = lazy(() =>
-  import('./components/roadmap-page').then((m) => ({ default: m.RoadmapPage }))
-);
 const AuthenticatedApp = lazy(() =>
   import('./components/authenticated-app').then((m) => ({ default: m.AuthenticatedApp }))
 );
-const ExplorePage = lazy(() => import('./pages/ExplorePage'));
-
-function RoadmapRoute() {
-  const navigate = useNavigate();
-  const handleBack = () => {
-    if (window.history.length > 1) navigate(-1);
-    else navigate('/');
-  };
-  return <RoadmapPage onBack={handleBack} />;
-}
+// Rituals fork: the signed-ticket entry, /space#t=<ticket>.
+const SpacePage = lazy(() => import('./pages/SpacePage.jsx'));
 
 const fallback = (
   <div style={{
     height: '100%',
-    background: 'var(--hush-black)',
+    background: 'var(--sidebar)',
   }} />
 );
 
@@ -204,12 +195,12 @@ function AppContent() {
     return (
       <Suspense fallback={fallback}>
         <Routes>
+          {/* Rituals space entry: creates the identity / unlocks, then claims */}
+          <Route path="/space" element={<SpacePage />} />
+
           {/* Public routes - accessible without auth */}
-          <Route path="/join/:instance/:code" element={<Invite />} />
-          <Route path="/invite/:code" element={<Invite />} />
           <Route path="/link-device" element={<LinkDevice />} />
           <Route path="/room/:roomName" element={<Navigate to="/" replace />} />
-          <Route path="/roadmap" element={<RoadmapRoute />} />
 
           {/* Everything else → login/PIN screen */}
           <Route path="*" element={<UnauthenticatedShell />} />
@@ -238,14 +229,14 @@ function AppContent() {
             element={<AuthenticatedApp />}
           />
 
-          {/* Guild discovery */}
-          <Route path="/explore" element={<ExplorePage />} />
+          {/* Rituals space entry: claims the ticket, then opens the space */}
+          <Route path="/space" element={<SpacePage />} />
 
-          {/* Cross-instance invite */}
-          <Route path="/join/:instance/:code" element={<Invite />} />
-
-          {/* Same-instance invite (legacy path kept) */}
-          <Route path="/invite/:code" element={<Invite />} />
+          {/* Rituals fork: no discovery and no invite links (Rituals owns
+              who is in a space). Old links land on the app. */}
+          <Route path="/explore" element={<Navigate to="/" replace />} />
+          <Route path="/join/:instance/:code" element={<Navigate to="/" replace />} />
+          <Route path="/invite/:code" element={<Navigate to="/" replace />} />
 
           {/* Device-link approval/new-device handoff */}
           <Route path="/link-device" element={<LinkDevice />} />
@@ -264,41 +255,11 @@ function AppContent() {
 
           {/* Utility pages */}
           <Route path="/room/:roomName" element={<Navigate to="/" replace />} />
-          <Route path="/roadmap" element={<RoadmapRoute />} />
+          <Route path="/roadmap" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
     </>
   );
-}
-
-// ── Cosmetic components ──────────────────────────────────────────────────────
-
-/** Syncs favicon and apple-touch-icon with theme (prefers-color-scheme or data-theme). */
-function FaviconThemeSync() {
-  useEffect(() => {
-    const getTheme = () => {
-      const dataTheme = document.documentElement.getAttribute('data-theme');
-      if (dataTheme) return dataTheme;
-      return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-    };
-    const apply = () => {
-      const theme = getTheme();
-      const favicon = document.getElementById('favicon');
-      const appleTouch = document.getElementById('apple-touch-icon');
-      if (favicon) favicon.href = theme === 'light' ? '/favicon-light.png' : '/favicon.png';
-      if (appleTouch) appleTouch.href = theme === 'light' ? '/apple-touch-icon-light.png' : '/apple-touch-icon.png';
-    };
-    apply();
-    const mo = new MutationObserver(apply);
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-    const mq = window.matchMedia('(prefers-color-scheme: light)');
-    mq.addEventListener('change', apply);
-    return () => {
-      mo.disconnect();
-      mq.removeEventListener('change', apply);
-    };
-  }, []);
-  return null;
 }
 
 // ── App root ─────────────────────────────────────────────────────────────────
@@ -306,11 +267,14 @@ function FaviconThemeSync() {
 export default function App() {
   useDesktopShell();
   const location = useLocation();
-  const { isBlockedTab, takeOver } = useSingleTab();
+  // Rituals fork: a space entry (someone just tapped the people on a shared
+  // task) takes the session over from an older tab instead of being blocked.
+  // The favicon is the Rituals mark SVG, which follows the OS appearance by
+  // itself, so upstream's favicon theme sync is gone.
+  const [preferThisTab] = useState(() => hasPendingSpaceEntry());
+  const { isBlockedTab, takeOver } = useSingleTab({ preferThisTab });
   const blockedFlow = location.pathname === '/link-device'
     ? 'device-link'
-    : location.pathname.startsWith('/invite/') || location.pathname.startsWith('/join/')
-    ? 'invite'
     : 'generic';
 
   if (isBlockedTab) {
@@ -322,13 +286,9 @@ export default function App() {
       <AuthProvider>
         <InstanceProvider>
           <BootProvider>
-            <FaviconThemeSync />
             <DesktopWindowFloorSync />
             <E2eTestAuthBridge />
             <AppBackground />
-            <StaleServerBanner />
-            <StaleServerDesktopDialog />
-            <DesktopManualUpdatePrompt />
             <DesktopShell>
               <AppContent />
             </DesktopShell>

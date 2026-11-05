@@ -16,10 +16,17 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import {
+  generateIdentityMnemonic,
   mnemonicToIdentityKey,
   signAuthChallengeV2,
   signTransparencyEntry,
 } from '../lib/bip39Identity';
+import {
+  deleteRecoveryPhrase,
+  recoveryPhraseDatabaseName,
+  storeRecoveryPhrase,
+} from '../lib/ritualsRecoveryPhrase';
+import { setRecoveryPhraseUnsaved } from '../lib/ritualsSpace';
 import {
   encryptVault,
   decryptVaultAndExportKey,
@@ -808,6 +815,8 @@ async function deleteRevokedDeviceDatabases(userId, deviceId) {
     `hush-vault-session-${userId}`,
     `hush-transcript-${userId}`,
     'hush-link-archive-exports',
+    // Rituals fork: a recovery phrase kept for a space identity.
+    recoveryPhraseDatabaseName(userId),
   ]);
 
   if (deviceId) {
@@ -1631,6 +1640,161 @@ export function useAuth() {
     }
   }, [finishAuth, applyVaultTimeout, requirePinSetup]);
 
+  // ── Rituals space: identity with no input ──────────────────────────────────
+
+  /**
+   * Phrase of a space identity whose registration has not been completed on
+   * this device yet. Reused by retries (and by a newer ticket) so a
+   * registration that succeeded server-side but failed locally afterwards
+   * (lost response, key-package upload error) signs in with the same key
+   * instead of stranding the account. Memory only; cleared once the
+   * identity is sealed on this device.
+   */
+  const pendingSpaceIdentityRef = useRef(null);
+
+  /**
+   * Rituals fork: creates this device's identity for a Rituals space entry
+   * with no input at all.
+   *
+   *  1. A random BIP39 phrase is generated here (`generateIdentityMnemonic`);
+   *     it never leaves this browser.
+   *  2. Registration uses the ticket's suggested username (`un`, else a slug
+   *     of `dn`), then the same name plus `-NNNN` on a collision (the caller
+   *     passes up to six candidates), display name `dn`, and the signed
+   *     space ticket as the invite code (the server verifies it).
+   *  3. No PIN step. The vault-timeout policy is set to `never`, and the
+   *     identity is sealed by the non-extractable vault session key
+   *     (`vaultSessionKey.ts`, `writeVaultSessionForUnlock`), which the boot
+   *     path resumes silently on reload, in new tabs and after relaunch.
+   *  4. The phrase is kept sealed on this device (`ritualsRecoveryPhrase.ts`)
+   *     and `rituals_space_phrase_unsaved=1` is set, so Settings can offer
+   *     "Save recovery phrase" later.
+   *
+   * Unlike `performRegister` it does not toggle the global `loading` flag,
+   * so the /space page stays mounted and shows its own progress.
+   *
+   * @param {{ ticket: string, displayName: string, usernames: string[], instanceUrl?: string }} input
+   * @returns {Promise<{ user: object }>}
+   */
+  const provisionRitualsSpaceIdentity = useCallback(async ({
+    ticket,
+    displayName,
+    usernames,
+    instanceUrl,
+  }) => {
+    if (!ticket) throw new Error('space ticket required');
+    setError(null);
+    const candidates = Array.isArray(usernames) && usernames.length > 0
+      ? usernames
+      : ['member'];
+    const baseUrl = await markAuthInstanceUsed(
+      normalizeInstanceUrl(instanceUrl) || window.location.origin,
+    );
+
+    if (!pendingSpaceIdentityRef.current) {
+      pendingSpaceIdentityRef.current = { mnemonic: generateIdentityMnemonic() };
+    }
+    const { mnemonic } = pendingSpaceIdentityRef.current;
+    const { privateKey, publicKey } = await mnemonicToIdentityKey(mnemonic);
+    const deviceId = getDeviceId();
+    const publicKeyBase64 = toBase64(publicKey);
+
+    const transparencyTs = Math.floor(Date.now() / 1000);
+    let transparencySigBase64 = null;
+    try {
+      const { signature } = await signTransparencyEntry(
+        privateKey,
+        'register',
+        publicKey,
+        null,
+        transparencyTs,
+      );
+      transparencySigBase64 = toBase64(signature);
+    } catch (sigErr) {
+      console.warn('[transparency] Failed to sign registration entry:', sigErr);
+    }
+
+    let data = null;
+    let alreadyRegistered = false;
+    let lastError = null;
+    for (const username of candidates) {
+      try {
+        data = await registerWithPublicKey(
+          username,
+          displayName || username,
+          publicKeyBase64,
+          deviceId,
+          ticket,
+          baseUrl,
+          transparencySigBase64,
+          transparencySigBase64 ? transparencyTs : null,
+        );
+        break;
+      } catch (err) {
+        lastError = err;
+        const status = Number(err?.status);
+        const message = String(err?.message || '');
+        if (status === 409 && /username/i.test(message)) continue;
+        // This key (or this ticket) already registered on an earlier try
+        // whose response never arrived: sign in with the same key below.
+        if ((status === 409 && /public key/i.test(message)) || /ticket_used/i.test(message)) {
+          alreadyRegistered = true;
+          break;
+        }
+        throw err;
+      }
+    }
+    if (!data && !alreadyRegistered) {
+      throw lastError ?? new Error('could not register this device');
+    }
+
+    let u;
+    if (data) {
+      identityKeyRef.current = { privateKey, publicKey };
+      ({ user: u } = await finishAuth(data, baseUrl));
+    } else {
+      ({ user: u } = await performChallengeResponse(privateKey, publicKey, baseUrl));
+    }
+
+    // Keep the identity on this device without a PIN: `never` policy,
+    // public-key marker, home instance, then the sealed session record.
+    setVaultConfig(u.id, { timeout: 'never', pinType: 'pin' });
+    localStorage.removeItem(LEGACY_VAULT_TIMEOUT_KEY);
+    localStorage.setItem(`${VAULT_USER_KEY_PREFIX}${u.id}`, bytesToHex(publicKey));
+    localStorage.setItem(`${VAULT_USER_KEY_PREFIX}_last_user`, u.id);
+    localStorage.setItem(HOME_INSTANCE_KEY, baseUrl || window.location.origin);
+    clearPinSetup();
+    setHasLocalVault(true);
+    setVaultState('unlocked');
+    applyVaultTimeout(u.id);
+    await writeVaultSessionForUnlock(u.id, privateKey, publicKey);
+    pendingSpaceIdentityRef.current = null;
+
+    try {
+      await storeRecoveryPhrase(u.id, mnemonic);
+      setRecoveryPhraseUnsaved(true);
+    } catch (err) {
+      console.warn('[useAuth] could not keep the recovery phrase on this device:', err);
+    }
+    return { user: u };
+  }, [applyVaultTimeout, clearPinSetup, finishAuth, performChallengeResponse]);
+
+  /**
+   * Rituals fork: the server session is still valid but this device can no
+   * longer produce the identity key (no PIN blob and nothing resumable in
+   * the session-key store). Upstream left the app on a PIN screen that can
+   * never unlock; drop the local session instead so the person can sign in
+   * with the recovery phrase, or a space entry can create a new identity.
+   */
+  const dropUnrecoverableLocalSession = useCallback(() => {
+    identityKeyRef.current = null;
+    clearSession();
+    setToken(null);
+    setUser(null);
+    setHasLocalVault(false);
+    setVaultState('none');
+  }, []);
+
   // ── Recovery ───────────────────────────────────────────────────────────────
 
   /**
@@ -2186,10 +2350,21 @@ export function useAuth() {
   /**
    * Dismisses the post-auth PIN-setup prompt while keeping the current
    * authenticated session unlocked.
+   *
+   * Rituals fork: without a PIN there is no encrypted vault blob, so the
+   * identity survives only through the vault session-key store. Unless the
+   * person already chose a policy, skipping the PIN keeps this device signed
+   * in (`never`), the same as a space entry, instead of losing the identity
+   * when the browser closes.
    */
   const skipPinSetup = useCallback(() => {
+    const userId = user?.id ?? currentUserIdRef.current;
+    if (userId && getEffectiveVaultConfig(userId)?.timeout === undefined) {
+      setVaultConfig(userId, { timeout: 'never', pinType: 'pin' });
+      if (vaultState === 'unlocked') applyVaultTimeout(userId);
+    }
     clearPinSetup();
-  }, [clearPinSetup]);
+  }, [applyVaultTimeout, clearPinSetup, getEffectiveVaultConfig, user?.id, vaultState]);
 
   /**
    * Updates the persisted vault timeout policy for the current user and
@@ -2274,8 +2449,11 @@ export function useAuth() {
           req.onsuccess = req.onerror = req.onblocked = () => resolve();
         }),
         deleteTranscriptDatabase(userId).catch(() => undefined),
+        // Rituals fork: a kept recovery phrase never outlives sign-out.
+        deleteRecoveryPhrase(userId).catch(() => undefined),
       );
     }
+    pendingSpaceIdentityRef.current = null;
     if (resetPlan.shouldClearTranscriptCache) {
       clearTranscriptCache();
     }
@@ -2459,12 +2637,18 @@ export function useAuth() {
         await performChallengeResponse(privateKey, publicKey, reauthBaseUrl);
         return true;
       } catch (err) {
-        if (!isServerUnavailableError(err)) {
+        // Rituals fork: only an explicit rejection of this key (unknown
+        // user, banned, revoked device) stops the resume. Anything else
+        // (unreachable, 5xx, a rate limit) unlocks locally as the policy
+        // already allows, and the offline re-auth effect mints the JWT
+        // later. Treating those as rejections would make a device with no
+        // PIN blob drop its only copy of the identity over a hiccup.
+        if (isServerSessionInvalidationError(err)) {
           console.warn('[useAuth] vault session-key challenge-response failed:', err);
           return false;
         }
         // Server unreachable: fall through to the in-memory unlock below.
-        console.warn('[useAuth] vault session-key auto-unlock: server unreachable; unlocking offline:', err);
+        console.warn('[useAuth] vault session-key auto-unlock: no session from the server; unlocking offline:', err);
       }
     }
 
@@ -2520,38 +2704,42 @@ export function useAuth() {
       if (vaultUserId) {
         localStorage.setItem(`${VAULT_USER_KEY_PREFIX}_last_user`, vaultUserId);
 
-        if (authInvalidation) {
-          applyBootVaultPlan(planNoTokenLocalVaultBoot({
-            hasAuthInvalidation: true,
-            vaultExists: true,
-          }));
-          setLoading(false);
-          return undefined;
-        }
-
         // Verify the vault actually has an encrypted key (PIN was set).
         // If registration completed but PIN was never set (iOS killed page
         // before PIN setup), the vault marker exists but no encrypted blob.
         // In that case, fall through to 'none' so the user can re-register/recover.
+        //
+        // Rituals fork: an identity kept under the `never` policy (a space
+        // entry, or a skipped PIN) has no PIN blob at all; it lives only in
+        // the vault session-key store. So the session-key resume runs first
+        // for every local vault, PIN or not, and also after a server-session
+        // invalidation: resuming re-authenticates with a fresh challenge,
+        // exactly what a PIN unlock would do, and a server that rejects the
+        // key leaves this path with nothing unlocked. Only when nothing
+        // resumes does the boot fall back to the PIN screen (PIN blob) or
+        // treat the marker as stale (no PIN blob).
         let idbCheckCancelled = false;
         (async () => {
           try {
             const result = await checkVaultExistsInIDB(vaultUserId);
             if (idbCheckCancelled) return;
-            if (result.exists) {
-              // Try the vault session-key store first — under `never`
-              // / `browser_close` (with marker) / numeric (within
-              // deadline), this resumes unlocked without PIN. Falls
-              // back to desktop auto-unlock, then PIN.
-              let unlocked = await tryVaultSessionAutoUnlock(vaultUserId, null);
+            // Under `never` / `browser_close` (with marker or a live
+            // sibling tab) / numeric (within deadline), this resumes
+            // unlocked without a PIN. Falls back to desktop auto-unlock,
+            // then PIN.
+            let unlocked = await tryVaultSessionAutoUnlock(vaultUserId, null);
+            if (idbCheckCancelled) return;
+            if (!unlocked && result.exists && !authInvalidation) {
+              unlocked = await tryDesktopAutoUnlock(vaultUserId, null);
               if (idbCheckCancelled) return;
-              if (!unlocked) {
-                unlocked = await tryDesktopAutoUnlock(vaultUserId, null);
-                if (idbCheckCancelled) return;
-              }
-              if (!unlocked) {
-                applyBootVaultPlan(planNoTokenLocalVaultBoot({ vaultExists: true }));
-              }
+            }
+            if (unlocked) {
+              // Session restored (a cleared invalidation re-runs this effect).
+            } else if (result.exists) {
+              applyBootVaultPlan(planNoTokenLocalVaultBoot({
+                hasAuthInvalidation: Boolean(authInvalidation),
+                vaultExists: true,
+              }));
             } else {
               // Vault marker set during registration but PIN never set - clear stale marker.
               const bootPlan = planNoTokenLocalVaultBoot({ vaultExists: false });
@@ -2641,6 +2829,19 @@ export function useAuth() {
 
     let cancelled = false;
 
+    // Rituals fork: when /api/auth/me cannot answer (offline, 5xx), resume
+    // the local vault from the session-key store with the stored JWT, as
+    // the policy allows. Returns true when unlocked.
+    const resumeLocalVaultAfterSessionFetchFailure = async (jwt) => {
+      const markerUserId = findVaultMarkerUserId();
+      if (!markerUserId) return false;
+      try {
+        return await tryVaultSessionAutoUnlock(markerUserId, jwt);
+      } catch {
+        return false;
+      }
+    };
+
     (async () => {
       try {
         const res = await fetchWithAuth(stored, '/api/auth/me');
@@ -2655,6 +2856,17 @@ export function useAuth() {
           // Transient error - keep session alive, fall through to state check.
           setToken(stored);
           // State determined below.
+          // Rituals fork: a transient /me failure must not look like "no
+          // identity" (a space entry would then create a new one). Resume
+          // from the session-key store when the policy allows, else land
+          // on the same locked state as a network failure.
+          const resumed = await resumeLocalVaultAfterSessionFetchFailure(stored);
+          if (cancelled) return;
+          if (!resumed) {
+            applyBootVaultPlan(planAuthenticatedSessionFetchFailure({
+              hasVaultMarker: Boolean(findVaultMarkerUserId()),
+            }));
+          }
         } else {
           const u = await res.json();
           if (cancelled) return;
@@ -2705,30 +2917,29 @@ export function useAuth() {
                 const blob = await loadEncryptedKey(db);
                 db.close();
                 if (cancelled) return;
-                if (blob) {
-                  let unlocked = await tryVaultSessionAutoUnlock(u.id, stored);
+                // Rituals fork: resume from the session-key store first,
+                // PIN blob or not (a `never` identity has no PIN blob).
+                let unlocked = await tryVaultSessionAutoUnlock(u.id, stored);
+                if (cancelled) return;
+                if (!unlocked && blob) {
+                  unlocked = await tryDesktopAutoUnlock(u.id, stored);
                   if (cancelled) return;
-                  if (!unlocked) {
-                    unlocked = await tryDesktopAutoUnlock(u.id, stored);
-                    if (cancelled) return;
-                  }
-                  if (!unlocked) {
-                    clearPinSetup();
-                    applyBootVaultPlan(planAuthenticatedVaultBoot({
-                      hasVaultEvidence: true,
-                      hasEncryptedVaultBlob: true,
-                    }));
-                  }
-                } else {
-                  // Stale marker - PIN was never set. Clear it.
-                  const bootPlan = planAuthenticatedVaultBoot({
+                }
+                if (unlocked) {
+                  // Unlocked in memory with the existing JWT.
+                } else if (blob) {
+                  clearPinSetup();
+                  applyBootVaultPlan(planAuthenticatedVaultBoot({
                     hasVaultEvidence: true,
-                    hasEncryptedVaultBlob: false,
-                  });
-                  if (bootPlan.shouldClearVaultMarker) {
-                    localStorage.removeItem(`${VAULT_USER_KEY_PREFIX}${u.id}`);
-                  }
-                  applyBootVaultPlan(bootPlan);
+                    hasEncryptedVaultBlob: true,
+                  }));
+                } else {
+                  // Stale marker - PIN was never set and nothing resumes, so
+                  // this device cannot produce the identity key any more.
+                  // Clear the marker and the local session (upstream left a
+                  // PIN screen that could never unlock).
+                  localStorage.removeItem(`${VAULT_USER_KEY_PREFIX}${u.id}`);
+                  dropUnrecoverableLocalSession();
                 }
               } catch {
                 if (!cancelled) {
@@ -2743,15 +2954,27 @@ export function useAuth() {
             }
           } else {
             // Authenticated via JWT but no vault set up yet (PIN never configured).
-            applyBootVaultPlan(planAuthenticatedVaultBoot({ hasVaultEvidence: false }));
+            // Rituals fork: the marker may have been evicted while the
+            // session-key store still holds the identity; try it. Without
+            // it the identity key is gone from this device: drop the local
+            // session instead of an unlock screen that cannot unlock.
+            const unlocked = await tryVaultSessionAutoUnlock(u.id, stored);
+            if (cancelled) return;
+            if (!unlocked) dropUnrecoverableLocalSession();
           }
         }
       } catch {
         // Network error - keep token, keep as locked if vault exists.
         setToken(stored);
-        applyBootVaultPlan(planAuthenticatedSessionFetchFailure({
-          hasVaultMarker: Boolean(findVaultMarkerUserId()),
-        }));
+        // Rituals fork: resume offline from the session-key store when the
+        // policy allows it (see resumeLocalVaultAfterSessionFetchFailure).
+        const resumed = await resumeLocalVaultAfterSessionFetchFailure(stored);
+        if (cancelled) return;
+        if (!resumed) {
+          applyBootVaultPlan(planAuthenticatedSessionFetchFailure({
+            hasVaultMarker: Boolean(findVaultMarkerUserId()),
+          }));
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -2938,6 +3161,31 @@ export function useAuth() {
     return () => window.removeEventListener('hush_auth_invalid', handleAuthInvalid);
   }, [markServerSessionInvalidated]);
 
+  /**
+   * Rituals fork: mints a JWT now for a vault that is unlocked locally but
+   * has no server session (offline unlock), instead of waiting for the
+   * offline re-auth effect's next tick. Used by the /space page's Retry.
+   *
+   * @returns {Promise<boolean>} true when a session was minted
+   */
+  const reauthenticateNow = useCallback(async () => {
+    const identity = identityKeyRef.current;
+    if (!identity?.privateKey || !identity?.publicKey) return false;
+    try {
+      await performChallengeResponse(
+        identity.privateKey,
+        identity.publicKey,
+        resolveReauthInstanceUrl(),
+      );
+      return true;
+    } catch (err) {
+      if (isServerSessionInvalidationError(err)) {
+        markServerSessionInvalidated(AUTH_INVALIDATION_REASONS.SERVER_SESSION_INVALID);
+      }
+      return false;
+    }
+  }, [markServerSessionInvalidated, performChallengeResponse]);
+
   return {
     user,
     token,
@@ -2969,6 +3217,10 @@ export function useAuth() {
     performLogout,
     clearError,
     clearAuthInvalidation,
+    // Rituals fork: no-input identity for a space entry, and an immediate
+    // re-auth for the /space page's Retry.
+    provisionRitualsSpaceIdentity,
+    reauthenticateNow,
     // Ref to the in-memory identity keypair. Used by useInstances for
     // challenge-response auth on remote instances. Never serialized.
     identityKeyRef,
