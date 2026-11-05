@@ -51,3 +51,23 @@ export function pageInstanceOrigin() {
   if (typeof window === 'undefined') return '';
   return currentPinnedSpaceInstanceUrl() || window.location.origin;
 }
+
+/** @param {string|null|undefined} pageOrigin @returns {boolean} the page is the frame host */
+export function isFrameHostOrigin(pageOrigin) {
+  const origin = bareOrigin(pageOrigin);
+  return Boolean(origin && RITUALS_SPACE_WEB_ORIGINS.includes(origin));
+}
+
+/**
+ * The frame host opened as a page of its own (not inside rituals.app). It
+ * never boots there: no identity, no ticket kept, no storage written. Spaces
+ * on the web open inside Rituals; the native app uses space.rit.al.
+ */
+export function isFrameHostTopLevel() {
+  if (typeof window === 'undefined' || !isFrameHostOrigin(window.location?.origin)) return false;
+  try {
+    return window.self === window.top;
+  } catch {
+    return false;
+  }
+}

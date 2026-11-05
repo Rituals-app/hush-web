@@ -1,13 +1,14 @@
 // Rituals fork: must stay the first import (strips `/space#t=` at once).
 import './lib/ritualsSpaceBoot.js';
 import { ensureSpaceAccount, isFramed, postToRitualsParent, readSpaceTicket } from './lib/ritualsSpace';
-import { probeFrameStorage, writeProbeMarkers } from './lib/ritualsSpaceProbe';
+import { checkFrameStorage } from './lib/ritualsSpaceProbe';
+import { isFrameHostTopLevel, pageInstanceOrigin } from './lib/ritualsSpaceInstance';
 
 // Rituals fork (2026-11-05): one local Space identity per Rituals account. The
 // check runs before any other module of the app is loaded, so nothing has
 // opened the identity databases yet when they must be cleared for a different
 // account; the app itself lives in ./appMain.jsx. In the rituals.app frame a
-// storage partition probe runs first (src/lib/ritualsSpaceProbe.js).
+// storage check runs first (src/lib/ritualsSpaceProbe.js).
 const BUTTON_STYLE = 'margin-top:1rem;padding:.5rem 1rem;border-radius:999px;border:1px solid currentColor;background:none;font:inherit;cursor:pointer';
 
 function showNotice(message, button, compact) {
@@ -42,34 +43,43 @@ function showSwitchBlocked() {
   showNotice('Another Space tab is still open on this device. Close it, then open the space again from Rituals.', retryButton(), false);
 }
 
-// Framed with a partitioned store: never boot, never create an identity. The
-// door opens the space in its own tab (same ticket, fragment only); once that
-// tab has run, a refocused frame passes the probe and reloads.
-function showOpenSpaceDoor(ticket) {
-  postToRitualsParent({ type: 'needs-top-level' });
+// Framed with storage that does not work at all (private mode, blocked
+// storage): never boot, never create an identity. The parent hears why; the
+// door opens the space top-level on the Space host (ticket in the fragment).
+function showStorageUnavailable(ticket, reason) {
+  postToRitualsParent({ type: 'storage-unavailable', reason });
   const open = document.createElement('button');
   open.type = 'button';
   open.textContent = 'Open space \u2197';
   open.setAttribute('style', BUTTON_STYLE);
   open.addEventListener('click', () => {
-    const url = ticket ? `${window.location.origin}/space#t=${encodeURIComponent(ticket)}` : `${window.location.origin}/space`;
-    window.open(url, '_blank', 'noopener');
+    const base = `${pageInstanceOrigin()}/space`;
+    window.open(ticket ? `${base}#t=${encodeURIComponent(ticket)}` : base, '_blank', 'noopener');
   });
-  showNotice('This space opens in its own tab the first time.', open, true);
-  window.addEventListener('focus', () => {
-    probeFrameStorage().then((result) => {
-      if (!result.partitioned) window.location.reload();
-    }, () => {});
-  });
+  showNotice('This browser is not keeping data for this space here.', open, true);
+}
+
+// The frame host opened on its own: a plain page, nothing booted or stored.
+function showOpenInRituals() {
+  const link = document.createElement('a');
+  link.href = 'https://rituals.app';
+  link.textContent = 'Open in Rituals';
+  link.setAttribute('style', `${BUTTON_STYLE};display:inline-block;color:inherit;text-decoration:none`);
+  showNotice('Spaces open inside Rituals.', link, false);
 }
 
 async function boot() {
+  if (isFrameHostTopLevel()) {
+    showOpenInRituals();
+    return;
+  }
   const ticket = readSpaceTicket();
-  // Before any identity work (the account check may clear storage).
+  // Before any identity work (the account check may clear storage). The
+  // frame boots whatever the partitioning; only unusable storage stops it.
   if (isFramed()) {
-    const probe = await probeFrameStorage().catch(() => ({ partitioned: true }));
-    if (probe.partitioned) {
-      showOpenSpaceDoor(ticket);
+    const storage = await checkFrameStorage().catch(() => ({ usable: false, reason: 'indexeddb_unavailable' }));
+    if (!storage.usable) {
+      showStorageUnavailable(ticket, storage.reason);
       return;
     }
   }
@@ -79,8 +89,6 @@ async function boot() {
     showSwitchBlocked();
     return;
   }
-  // Not awaited: the app does not wait on the probe markers.
-  writeProbeMarkers();
   await import('./appMain.jsx');
 }
 

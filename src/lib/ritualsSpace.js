@@ -660,7 +660,7 @@ export function postToRitualsHost(message) {
 
 /**
  * Posts to the Rituals web client only (the frame's parent), never to the
- * native host: `{type:"busy"}`, `{type:"needs-top-level"}` and
+ * native host: `{type:"busy"}`, `{type:"storage-unavailable", reason}` and
  * `{type:"voice", inCall}` are frame-only messages. A no-op when not framed.
  *
  * @param {{ type: string, [key: string]: unknown }} message

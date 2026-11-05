@@ -1,14 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { pinnedSpaceInstanceUrl, RITUALS_SPACE_INSTANCE_URL } from './ritualsSpaceInstance.js';
-import { decideFramePartition, readProbeCookie } from './ritualsSpaceProbe.js';
+import { isFrameHostOrigin, isFrameHostTopLevel, pinnedSpaceInstanceUrl, RITUALS_SPACE_INSTANCE_URL } from './ritualsSpaceInstance.js';
+import { checkFrameStorage, decideFrameStorage } from './ritualsSpaceProbe.js';
 import {
   RITUALS_PARENT_ORIGIN,
   handleRitualsParentMessage,
   isFrameVisible,
   resolveRitualsParentOrigin,
 } from './ritualsSpace.js';
-
-const NONCE = '0123456789abcdef0123456789abcdef';
 
 describe('pinnedSpaceInstanceUrl', () => {
   it('pins the frame host to space.rit.al', () => {
@@ -71,20 +69,36 @@ describe('handleRitualsParentMessage', () => {
   });
 });
 
-describe('decideFramePartition', () => {
-  it('is unpartitioned only with matching markers and no denial', () => {
-    expect(decideFramePartition({ hasStorageAccess: true, cookieNonce: NONCE, idbNonce: NONCE })).toEqual({ partitioned: false, reason: null });
-    expect(decideFramePartition({ hasStorageAccess: null, cookieNonce: NONCE, idbNonce: NONCE }).partitioned).toBe(false);
+describe('isFrameHostOrigin', () => {
+  it('is true only for the frame host', () => {
+    expect(isFrameHostOrigin('https://space.rituals.app')).toBe(true);
+    for (const origin of ['https://space.rit.al', 'https://rituals.app', 'http://space.rituals.app', 'http://127.0.0.1:5173', '', null]) {
+      expect(isFrameHostOrigin(origin)).toBe(false);
+    }
   });
-  it('is partitioned on denial, a missing marker or a mismatch', () => {
-    expect(decideFramePartition({ hasStorageAccess: false, cookieNonce: NONCE, idbNonce: NONCE }).reason).toBe('storage_access_denied');
-    expect(decideFramePartition({ hasStorageAccess: true, cookieNonce: null, idbNonce: NONCE }).reason).toBe('no_marker');
-    expect(decideFramePartition({ hasStorageAccess: true, cookieNonce: NONCE, idbNonce: null }).reason).toBe('no_marker');
-    expect(decideFramePartition({ hasStorageAccess: true, cookieNonce: 'zz', idbNonce: 'zz' }).reason).toBe('no_marker');
-    expect(decideFramePartition({ hasStorageAccess: true, cookieNonce: NONCE, idbNonce: 'f'.repeat(32) }).reason).toBe('marker_mismatch');
+  it('is never top-level frame host on the test page', () => {
+    expect(isFrameHostTopLevel()).toBe(false);
   });
-  it('reads the probe cookie', () => {
-    expect(readProbeCookie(`a=1; rituals_space_seen=${NONCE}; b=2`)).toBe(NONCE);
-    expect(readProbeCookie('a=1')).toBeNull();
+});
+
+describe('decideFrameStorage', () => {
+  it('boots whenever storage works, with no partition test', () => {
+    expect(decideFrameStorage({ localStorageOk: true, idbOpened: true, idbWritten: true })).toEqual({ usable: true, reason: null });
+  });
+  it('stops only on unusable storage', () => {
+    expect(decideFrameStorage({ localStorageOk: false, idbOpened: true, idbWritten: true }).reason).toBe('localstorage_unavailable');
+    expect(decideFrameStorage({ localStorageOk: true, idbOpened: false, idbWritten: false }).reason).toBe('indexeddb_unavailable');
+    expect(decideFrameStorage({ localStorageOk: true, idbOpened: true, idbWritten: false }).reason).toBe('indexeddb_write_failed');
+  });
+  it('never asks for storage access', async () => {
+    const request = vi.fn();
+    const has = vi.fn();
+    document.requestStorageAccess = request;
+    document.hasStorageAccess = has;
+    expect(await checkFrameStorage()).toEqual({ usable: true, reason: null });
+    expect(request).not.toHaveBeenCalled();
+    expect(has).not.toHaveBeenCalled();
+    delete document.requestStorageAccess;
+    delete document.hasStorageAccess;
   });
 });
