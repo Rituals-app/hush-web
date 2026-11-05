@@ -135,6 +135,11 @@ export function useMLS({ getStore, getHistoryStore, getToken, channelId, baseUrl
       if (db) {
         const row = await mlsStore.getLocalPlaintext(db, messageId);
         if (row) {
+          // Rituals fork: tag legacy rows with this channel so a removal can
+          // delete them (mlsStore.deleteLocalPlaintextsForChannels).
+          if (channelId && !row.channelId) {
+            mlsStore.setLocalPlaintext(db, messageId, { ...row, channelId }).catch(() => {});
+          }
           return {
             content: row.plaintext,
             timestamp: row.timestamp,
@@ -185,6 +190,7 @@ export function useMLS({ getStore, getHistoryStore, getToken, channelId, baseUrl
       await mlsStore.setLocalPlaintext(db, messageId, {
         plaintext: payload.content ?? payload.plaintext ?? '',
         timestamp: payload.timestamp ?? Date.now(),
+        ...(channelId ? { channelId } : {}),
       });
     } catch {
       // Silent - cache errors must never surface to the user.
@@ -201,8 +207,9 @@ export function useMLS({ getStore, getHistoryStore, getToken, channelId, baseUrl
    */
   async function ensureChannelGroup() {
     if (!channelId) return;
+    let deps;
     try {
-      const deps = await buildDeps();
+      deps = await buildDeps();
       if (!deps.credential) return;
       await withChannelMLSMutex(textChannelKey(channelId), async () => {
         const epoch = await mlsStore.getGroupEpoch(deps.db, channelId);
@@ -210,6 +217,11 @@ export function useMLS({ getStore, getHistoryStore, getToken, channelId, baseUrl
         else await mlsGroup.catchupCommits(deps, channelId);
       });
     } catch (err) {
+      // Rituals fork (D19d): the server refused this channel (removed from the
+      // Space). Drop its group state and cached plaintext; never re-join.
+      if (deps && /** @type {{ status?: number }} */ (err)?.status === 403) {
+        await mlsGroup.leaveAllChannelGroups(deps, [channelId]).catch(() => {});
+      }
       console.warn('[useMLS] ensureChannelGroup failed; joining lazily on the first message instead', {
         channelId,
         reason: err instanceof Error ? err.message : String(err),

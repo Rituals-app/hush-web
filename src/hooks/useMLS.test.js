@@ -388,6 +388,41 @@ describe('useMLS', () => {
       expect(result).toEqual({ content: 'own send', timestamp: 1700000000 });
       expect(result.senderId).toBeUndefined();
     });
+
+    it('back-fills the channel tag on an untagged row', async () => {
+      mockDeps.mlsStore.getLocalPlaintext.mockResolvedValue({ plaintext: 'p', timestamp: 1 });
+      const { getCachedMessage } = useMLS({ getStore, getToken, channelId: 'ch-1', _deps: mockDeps });
+      await getCachedMessage('msg-legacy');
+      expect(mockDeps.mlsStore.setLocalPlaintext).toHaveBeenCalledWith(mockDb, 'msg-legacy', {
+        plaintext: 'p',
+        timestamp: 1,
+        channelId: 'ch-1',
+      });
+    });
+  });
+
+  describe('ensureChannelGroup', () => {
+    it('drops the channel group and plaintext when the server refuses with 403', async () => {
+      mockDeps.mlsStore.getGroupEpoch = vi.fn().mockResolvedValue(null);
+      mockDeps.mlsGroup.joinOrCreateChannelGroup = vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403 }));
+      mockDeps.mlsGroup.leaveAllChannelGroups = vi.fn().mockResolvedValue(undefined);
+      const { ensureChannelGroup } = useMLS({ getStore, getToken, channelId: 'ch-1', _deps: mockDeps });
+      await ensureChannelGroup();
+      expect(mockDeps.mlsGroup.leaveAllChannelGroups).toHaveBeenCalledWith(expect.any(Object), ['ch-1']);
+    });
+
+    it('keeps local state on other failures', async () => {
+      mockDeps.mlsStore.getGroupEpoch = vi.fn().mockResolvedValue(null);
+      mockDeps.mlsGroup.joinOrCreateChannelGroup = vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('down'), { status: 503 }));
+      mockDeps.mlsGroup.leaveAllChannelGroups = vi.fn().mockResolvedValue(undefined);
+      const { ensureChannelGroup } = useMLS({ getStore, getToken, channelId: 'ch-1', _deps: mockDeps });
+      await ensureChannelGroup();
+      expect(mockDeps.mlsGroup.leaveAllChannelGroups).not.toHaveBeenCalled();
+    });
   });
 
   describe('setCachedMessage', () => {
@@ -407,6 +442,7 @@ describe('useMLS', () => {
       expect(mockDeps.mlsStore.setLocalPlaintext).toHaveBeenCalledWith(mockDb, 'msg-456', {
         plaintext: 'hello world',
         timestamp: 1700000001,
+        channelId: 'ch-1',
       });
     });
 
