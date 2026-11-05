@@ -21,6 +21,8 @@ import {
   withReadOnlyHistoryScope,
   getLocalPlaintext,
   setLocalPlaintext,
+  deleteLocalPlaintextsForChannels,
+  deleteGroupStorage,
   getGroupEpoch,
   setGroupEpoch,
 } from './mlsStore';
@@ -715,6 +717,60 @@ describe('mlsStore', () => {
       const db = await nextDb();
       const row = await getLocalPlaintext(db, 'never-written');
       expect(row).toBeNull();
+      db.close();
+    });
+
+    it('deletes only the rows tagged with the removed channels', async () => {
+      const db = await nextDb();
+      await setLocalPlaintext(db, 'gone-1', { plaintext: 'a', timestamp: 1, channelId: 'ch-gone' });
+      await setLocalPlaintext(db, 'gone-2', { plaintext: 'b', timestamp: 2, channelId: 'ch-gone' });
+      await setLocalPlaintext(db, 'kept', { plaintext: 'c', timestamp: 3, channelId: 'ch-kept' });
+      await setLocalPlaintext(db, 'untagged', { plaintext: 'd', timestamp: 4 });
+      expect(await deleteLocalPlaintextsForChannels(db, ['ch-gone'])).toBe(2);
+      expect(await getLocalPlaintext(db, 'gone-1')).toBeNull();
+      expect(await getLocalPlaintext(db, 'gone-2')).toBeNull();
+      expect(await getLocalPlaintext(db, 'kept')).toEqual({ plaintext: 'c', timestamp: 3, channelId: 'ch-kept' });
+      expect(await getLocalPlaintext(db, 'untagged')).toEqual({ plaintext: 'd', timestamp: 4 });
+      db.close();
+    });
+  });
+
+  describe('deleteGroupStorage', () => {
+    // Key layout used by hush-crypto 0.2.2: u16 version 0x0001 + JSON.
+    function groupKey(groupId, extra = '') {
+      const vec = Array.from(new TextEncoder().encode(groupId)).join(',');
+      const json = `${extra ? '[' : ''}{"value":{"vec":[${vec}]}}${extra ? `,${extra}]` : ''}`;
+      const body = new TextEncoder().encode(json);
+      const out = new Uint8Array(2 + body.length);
+      out[1] = 1;
+      out.set(body, 2);
+      return out;
+    }
+
+    it('removes every OpenMLS row of one group and keeps other groups', async () => {
+      const db = await nextDb();
+      const bridge = window.mlsStorageBridge;
+      const gone = 'aaaaaaaa-0000-4000-8000-000000000001';
+      const kept = 'aaaaaaaa-0000-4000-8000-000000000002';
+      bridge.writeBytes('mls_epoch_secrets', groupKey(gone), new Uint8Array([1]));
+      bridge.writeBytes('mls_group_context', groupKey(gone), new Uint8Array([2]));
+      bridge.appendToList('mls_epoch_key_pairs', groupKey(gone, '3,0'), new Uint8Array([3]));
+      bridge.writeBytes('mls_epoch_secrets', groupKey(kept), new Uint8Array([4]));
+      bridge.writeBytes('mls_epoch_secrets', groupKey(`voice:${gone}`), new Uint8Array([5]));
+      await flushStorageCache(db);
+      // Let the fire-and-forget IDB writes land.
+      await new Promise((r) => setTimeout(r, 20));
+
+      const deleted = await deleteGroupStorage(db, new TextEncoder().encode(gone));
+      expect(deleted).toBe(3);
+      expect(bridge.readBytes('mls_epoch_secrets', groupKey(gone))).toBeNull();
+      expect(bridge.readBytes('mls_group_context', groupKey(gone))).toBeNull();
+      expect(Array.from(bridge.readBytes('mls_epoch_secrets', groupKey(kept)))).toEqual([4]);
+      expect(Array.from(bridge.readBytes('mls_epoch_secrets', groupKey(`voice:${gone}`)))).toEqual([5]);
+
+      await preloadGroupState(db);
+      expect(bridge.readBytes('mls_epoch_secrets', groupKey(gone))).toBeNull();
+      expect(bridge.readList('mls_epoch_key_pairs', groupKey(gone, '3,0'))).toEqual([]);
       db.close();
     });
   });

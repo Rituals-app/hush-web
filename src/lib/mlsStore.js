@@ -784,6 +784,7 @@ export async function getLocalPlaintext(db, messageId) {
     plaintext: row.plaintext,
     timestamp: row.timestamp ?? 0,
     ...(row.senderId ? { senderId: row.senderId } : {}),
+    ...(row.channelId ? { channelId: row.channelId } : {}),
   };
 }
 
@@ -795,7 +796,7 @@ export async function getLocalPlaintext(db, messageId) {
  *
  * @param {IDBDatabase} db
  * @param {string} messageId
- * @param {{ plaintext: string, timestamp: number, senderId?: string }} payload
+ * @param {{ plaintext: string, timestamp: number, senderId?: string, channelId?: string }} payload
  * @returns {Promise<void>}
  */
 export async function setLocalPlaintext(db, messageId, payload) {
@@ -804,7 +805,78 @@ export async function setLocalPlaintext(db, messageId, payload) {
     timestamp: payload.timestamp ?? Date.now(),
   };
   if (payload.senderId) row.senderId = payload.senderId;
+  // Rituals fork (2026-11-05): the channel tag lets a removal delete this
+  // Space's rows (deleteLocalPlaintextsForChannels).
+  if (payload.channelId) row.channelId = payload.channelId;
   await put(db, 'localPlaintext', messageId, row);
+}
+
+/**
+ * Rituals fork (2026-11-05): delete every cached plaintext tagged with one of
+ * `channelIds`. Used when this person is removed from a Space, so nothing
+ * readable from it stays on the device. Rows written before the tag existed
+ * carry no channel and are back-filled on read (useMLS getCachedMessage).
+ *
+ * @param {IDBDatabase} db
+ * @param {readonly string[]} channelIds
+ * @returns {Promise<number>} rows deleted
+ */
+export async function deleteLocalPlaintextsForChannels(db, channelIds) {
+  const wanted = new Set(channelIds);
+  if (!wanted.size) return 0;
+  const rows = await getAll(db, 'localPlaintext');
+  let deleted = 0;
+  for (const row of rows) {
+    const tagged = /** @type {{ key: string, channelId?: string }} */ (/** @type {unknown} */ (row));
+    if (tagged?.channelId && wanted.has(tagged.channelId)) {
+      await del(db, 'localPlaintext', tagged.key);
+      deleted++;
+    }
+  }
+  return deleted;
+}
+
+/**
+ * Rituals fork (2026-11-05): delete the OpenMLS state of one group (epoch
+ * secrets, message secrets, tree, context, own leaf, epoch key pairs, …) from
+ * IndexedDB and the in-memory cache. hush-crypto has no delete-group export;
+ * every group-scoped storage key is a 2-byte version followed by JSON that
+ * holds the group id as `"vec":[<bytes>]` (checked against hush-crypto 0.2.2),
+ * so rows are matched on that exact needle. Signature key pairs are keyed by
+ * public key and are kept.
+ *
+ * @param {IDBDatabase} db
+ * @param {Uint8Array} groupIdBytes
+ * @returns {Promise<number>} rows deleted
+ */
+export async function deleteGroupStorage(db, groupIdBytes) {
+  const needle = `"vec":[${Array.from(groupIdBytes).join(',')}]`;
+  const decoder = new TextDecoder();
+  let deleted = 0;
+  for (const storeName of STORAGE_PROVIDER_STORES) {
+    const rows = await getAll(db, storeName);
+    for (const row of rows) {
+      const key = String(row?.key ?? '');
+      const hexKey = key.startsWith('list:') ? key.slice(5) : key;
+      if (!/^[0-9a-f]*$/i.test(hexKey) || hexKey.length % 2) continue;
+      const keyText = decoder.decode(hexToKeyBytes(hexKey));
+      if (!keyText.includes(needle)) continue;
+      await del(db, storeName, key);
+      storageCache.delete(`${storeName}:${key}`);
+      deleted++;
+    }
+  }
+  return deleted;
+}
+
+/**
+ * @param {string} hex
+ * @returns {Uint8Array}
+ */
+function hexToKeyBytes(hex) {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
 }
 
 /**
