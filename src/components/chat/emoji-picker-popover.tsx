@@ -75,6 +75,10 @@ function EmojiMartPicker({
       previewPosition: "none",
       skinTonePosition: "search",
       navPosition: "bottom",
+      // Rituals fork: fit a 360 px pane (36 px per emoji plus padding).
+      ...(window.innerWidth < 400
+        ? { perLine: Math.max(6, Math.floor((window.innerWidth - 40) / 36)) }
+        : {}),
     })
 
     host.replaceChildren(picker)
@@ -131,6 +135,7 @@ export function EmojiPickerPopover({
       <PopoverContent
         align={align}
         side={side}
+        collisionPadding={8}
         className="w-auto border-0 bg-transparent p-0 shadow-none"
       >
         {Picker && data ? (
