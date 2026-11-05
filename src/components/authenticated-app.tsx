@@ -66,6 +66,7 @@ import {
   RITUALS_HOME_URL,
   isEmbedded,
   postToRitualsHost,
+  postToRitualsParent,
 } from "@/lib/ritualsSpace"
 import { RitualsMark } from "@/components/brand/HushLogo"
 import type {
@@ -704,6 +705,11 @@ export function AuthenticatedApp() {
   React.useEffect(() => {
     if (activeSpaceName) postToRitualsHost({ type: "title", title: activeSpaceName })
   }, [activeSpaceName])
+  // The rituals.app pane keeps a frame in a call alive while it is hidden.
+  const inVoiceCall = joinedVoice != null
+  React.useEffect(() => {
+    postToRitualsParent({ type: "voice", inCall: inVoiceCall })
+  }, [inVoiceCall])
   const [favorites, setFavorites] = React.useState<FavoriteEntry[]>([])
   const favoriteIds = React.useMemo(
     () => new Set(favorites.map((f) => f.messageId)),

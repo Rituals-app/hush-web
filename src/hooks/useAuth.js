@@ -115,6 +115,7 @@ import {
   markAuthInstanceUsed,
   normalizeInstanceUrl,
 } from '../lib/authInstanceStore';
+import { pageInstanceOrigin } from '../lib/ritualsSpaceInstance';
 import { queryClient } from '../lib/queryClient';
 import { invalidateDeviceKeysQueries } from './useDeviceKeys';
 // Used to repair missing or malformed public-key vault markers after storage
@@ -1619,7 +1620,7 @@ export function useAuth() {
       setHasLocalVault(true);
       requirePinSetup();
       setVaultState('unlocked');
-      localStorage.setItem(HOME_INSTANCE_KEY, baseUrl || window.location.origin);
+      localStorage.setItem(HOME_INSTANCE_KEY, baseUrl || pageInstanceOrigin());
       applyVaultTimeout(u.id);
       // P21 step 2 — write the unlocked identity into the vault session
       // key store. Mirrors the call in performChallengeResponse so the

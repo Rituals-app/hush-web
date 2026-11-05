@@ -1,3 +1,5 @@
+import { currentPinnedSpaceInstanceUrl } from './ritualsSpaceInstance.js';
+
 const DB_NAME = 'hush-auth-instances';
 const DB_VERSION = 1;
 const STORE_INSTANCES = 'instances';
@@ -54,6 +56,10 @@ function resolveDefaultAuthInstanceUrl() {
   if (typeof window === 'undefined') {
     return HOSTED_AUTH_INSTANCE_URL;
   }
+
+  // Rituals fork: the same-site frame host (space.rituals.app) uses space.rit.al.
+  const pinned = currentPinnedSpaceInstanceUrl();
+  if (pinned) return pinned;
 
   // Desktop app must default to the hosted instance, regardless of the
   // packaged renderer's origin (e.g. `app://localhost`). User overrides are
@@ -253,12 +259,16 @@ async function upsertKnownInstance(url, markUsed = false) {
 
 export function getSelectedAuthInstanceUrlSync() {
   maybeMigrateLegacyHostedSelection();
+  const pinned = currentPinnedSpaceInstanceUrl();
+  if (pinned) return pinned;
   if (typeof localStorage === 'undefined') return DEFAULT_AUTH_INSTANCE_URL;
   return normalizeInstanceUrl(localStorage.getItem(SELECTED_INSTANCE_KEY)) || DEFAULT_AUTH_INSTANCE_URL;
 }
 
 export function getActiveAuthInstanceUrlSync() {
   maybeMigrateLegacyHostedSelection();
+  const pinned = currentPinnedSpaceInstanceUrl();
+  if (pinned) return pinned;
   if (typeof sessionStorage !== 'undefined') {
     const active = normalizeInstanceUrl(sessionStorage.getItem(ACTIVE_INSTANCE_KEY));
     if (active) return active;

@@ -201,6 +201,7 @@ export function captureSpaceTicketFromLocation(options = {}) {
   if (!isSpacePath(pathname) || !hash) return null;
 
   const ticket = readTicketFromHash(hash);
+  captureParentOriginFromHash(hash);
   // Strip any fragment on /space, even a malformed one: it may still hold
   // ticket-like material.
   try {
@@ -506,6 +507,81 @@ export function classifySpaceError(err) {
 
 /** The only page allowed to frame the space (the host's CSP frame-ancestors) and to hear from it. */
 export const RITUALS_PARENT_ORIGIN = 'https://rituals.app';
+const PARENT_ORIGIN_STORAGE_KEY = 'rituals_space_parent_origin';
+const FRAME_VISIBLE_EVENT = 'rituals:frame-visible';
+
+let parentOrigin = null;
+let frameVisible = true;
+
+function isLoopbackHost(hostname) {
+  return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]'
+    || hostname.endsWith('.localhost');
+}
+
+/**
+ * The parent origin the frame talks to. Always https://rituals.app, except a
+ * local stack: a loopback origin passed in the frame URL's fragment (`#o=`) is
+ * accepted only when this page is itself loopback or a dev build, so a
+ * production page never posts to (or listens to) anything but rituals.app.
+ *
+ * @param {unknown} candidate the `o` fragment parameter
+ * @param {{ pageOrigin?: string|null, dev?: boolean }} [context]
+ * @returns {string}
+ */
+export function resolveRitualsParentOrigin(candidate, context = {}) {
+  if (typeof candidate !== 'string' || !candidate) return RITUALS_PARENT_ORIGIN;
+  let url;
+  try {
+    url = new URL(candidate);
+  } catch {
+    return RITUALS_PARENT_ORIGIN;
+  }
+  if (url.origin === RITUALS_PARENT_ORIGIN) return RITUALS_PARENT_ORIGIN;
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !isLoopbackHost(url.hostname)) {
+    return RITUALS_PARENT_ORIGIN;
+  }
+  if (url.origin !== candidate.replace(/\/$/, '')) return RITUALS_PARENT_ORIGIN;
+  let pageIsLoopback = false;
+  try {
+    pageIsLoopback = Boolean(context.pageOrigin) && isLoopbackHost(new URL(context.pageOrigin).hostname);
+  } catch {
+    pageIsLoopback = false;
+  }
+  return pageIsLoopback || context.dev === true ? url.origin : RITUALS_PARENT_ORIGIN;
+}
+
+function captureParentOriginFromHash(hash) {
+  if (typeof hash !== 'string' || hash.length < 2) return;
+  const raw = new URLSearchParams(hash.replace(/^#/, '')).get('o');
+  if (!raw) return;
+  parentOrigin = resolveRitualsParentOrigin(raw, {
+    pageOrigin: window.location.origin,
+    dev: Boolean(import.meta.env.DEV),
+  });
+  try {
+    sessionStorage.setItem(PARENT_ORIGIN_STORAGE_KEY, parentOrigin);
+  } catch {
+    // Memory still holds it for this page load.
+  }
+}
+
+/** @returns {string} the origin frame messages go to and are accepted from */
+export function ritualsParentOrigin() {
+  if (parentOrigin) return parentOrigin;
+  let stored = null;
+  try {
+    stored = sessionStorage.getItem(PARENT_ORIGIN_STORAGE_KEY);
+  } catch {
+    stored = null;
+  }
+  parentOrigin = stored
+    ? resolveRitualsParentOrigin(stored, {
+      pageOrigin: typeof window !== 'undefined' ? window.location.origin : null,
+      dev: Boolean(import.meta.env.DEV),
+    })
+    : RITUALS_PARENT_ORIGIN;
+  return parentOrigin;
+}
 
 /** @returns {{ postMessage: (msg: unknown) => void }|null} */
 function getHostHandler() {
@@ -564,7 +640,9 @@ export function installEmbeddedHistory() {
  * RITUALS_PARENT_ORIGIN) in a frame; a no-op in a normal browser tab.
  * Messages: `{type:"ready"}` once the space is shown, `{type:"title",
  * title}` with the space name, and `{type:"error", reason}` when the page
- * shows a terminal error instead of a space.
+ * shows a terminal error instead of a space. In a frame they go to
+ * ritualsParentOrigin() (https://rituals.app; a loopback origin on a local
+ * stack).
  *
  * @param {{ type: string, [key: string]: unknown }} message
  */
@@ -577,13 +655,73 @@ export function postToRitualsHost(message) {
       // The host went away (page closing); nothing to do.
     }
   }
-  if (isFramed()) {
-    try {
-      window.parent.postMessage(message, RITUALS_PARENT_ORIGIN);
-    } catch {
-      // The frame is closing; nothing to do.
-    }
+  postToRitualsParent(message);
+}
+
+/**
+ * Posts to the Rituals web client only (the frame's parent), never to the
+ * native host: `{type:"busy"}`, `{type:"storage-unavailable", reason}` and
+ * `{type:"voice", inCall}` are frame-only messages. A no-op when not framed.
+ *
+ * @param {{ type: string, [key: string]: unknown }} message
+ */
+export function postToRitualsParent(message) {
+  if (!isFramed()) return;
+  try {
+    window.parent.postMessage(message, ritualsParentOrigin());
+  } catch {
+    // The frame is closing; nothing to do.
   }
+}
+
+/** False while the parent says the Space pane is hidden (`{type:"visible", visible:false}`). */
+export function isFrameVisible() {
+  return frameVisible;
+}
+
+/**
+ * @param {(visible: boolean) => void} listener
+ * @returns {() => void}
+ */
+export function subscribeFrameVisible(listener) {
+  if (typeof window === 'undefined') return () => {};
+  const handler = (event) => listener(Boolean(event?.detail?.visible));
+  window.addEventListener(FRAME_VISIBLE_EVENT, handler);
+  return () => window.removeEventListener(FRAME_VISIBLE_EVENT, handler);
+}
+
+/**
+ * Handles one message from the parent. Accepted only from window.parent at
+ * ritualsParentOrigin(); anything else is ignored.
+ *   {type:"visible", visible:boolean}  the pane was shown or hidden
+ *   {type:"escape"}                    Escape pressed in the parent: closes
+ *                                      the open menu or dialog as a key would
+ *
+ * @param {MessageEvent} event
+ * @returns {boolean} true when the message was accepted
+ */
+export function handleRitualsParentMessage(event) {
+  if (!event || event.source !== window.parent || event.origin !== ritualsParentOrigin()) return false;
+  const data = event.data;
+  if (!data || typeof data !== 'object' || typeof data.type !== 'string') return false;
+  if (data.type === 'visible') {
+    if (typeof data.visible !== 'boolean') return false;
+    frameVisible = data.visible;
+    window.dispatchEvent(new CustomEvent(FRAME_VISIBLE_EVENT, { detail: { visible: data.visible } }));
+    return true;
+  }
+  if (data.type === 'escape') {
+    const target = document.activeElement instanceof HTMLElement ? document.activeElement : document.body;
+    target?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
+    return true;
+  }
+  return false;
+}
+
+/** Listens for parent messages when framed. Call once at startup. */
+export function installRitualsParentListener() {
+  if (!isFramed()) return;
+  window.addEventListener('message', handleRitualsParentMessage);
 }
 
 // ── Recovery phrase reminder flag ───────────────────────────────────────────
