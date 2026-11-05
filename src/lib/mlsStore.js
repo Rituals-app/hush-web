@@ -60,16 +60,18 @@ const STORAGE_PROVIDER_STORES = [
 // plaintext rows in the snapshot would put naked transcript data on the
 // wire (modulo the relay envelope) and at rest on the new device.
 //
-// Rituals fork (2026-11-05): the snapshot never carries this device's signing
-// material. The credential store holds the MLS signing private key, and
-// mls_signature_key_pairs / mls_own_leaf_nodes are the approving device's own
-// signature keys and leaf. A linked device makes its own MLS identity and
-// joins groups itself; it only needs the history tier to read older rows, so
-// copying another device's signer would let two devices sign as one leaf.
+// Rituals fork (2026-11-05): the snapshot carries no MLS key material at all.
+// The credential store holds the MLS signing private key; the OpenMLS stores
+// hold the approving device's signature keys, own leaf, leaf HPKE keys,
+// epoch key pairs, unused KeyPackage private keys and epoch/message secrets.
+// A linked device makes its own MLS identity and joins groups itself, and the
+// history tier only ever reads `localPlaintext` (useMLS getCachedMessage);
+// plaintext history travels in the transcriptVault blob. Copying any of these
+// would let a revoked or compromised linked device keep decrypting for, or
+// signing as, the approving device's leaf.
 export const HISTORY_SNAPSHOT_EXCLUDED_STORES = Object.freeze([
   STORE_CREDENTIAL,
-  'mls_signature_key_pairs',
-  'mls_own_leaf_nodes',
+  ...STORAGE_PROVIDER_STORES,
 ]);
 
 const HISTORY_SNAPSHOT_STORES = [
@@ -592,7 +594,7 @@ export async function importHistorySnapshot(db, snapshot) {
   if (!snapshot?.stores) return;
 
   // Defensive: a snapshot from an older approving device may still carry the
-  // excluded signing stores. Clear them and never import their rows.
+  // excluded key-material stores. Clear them and never import their rows.
   for (const storeName of HISTORY_SNAPSHOT_EXCLUDED_STORES) {
     await clearStore(db, storeName);
   }
