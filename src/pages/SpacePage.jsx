@@ -21,7 +21,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowUpRightIcon, RefreshCwIcon } from 'lucide-react';
+import { ArrowUpRightIcon, Link2Icon, RefreshCwIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
@@ -29,6 +29,7 @@ import { RitualsMark } from '@/components/brand/HushLogo';
 import { PinUnlockPanel } from '@/components/auth/pin-unlock-panel';
 import { PinSetupPanel } from '@/components/auth/pin-setup-panel';
 import { useAuth } from '../contexts/AuthContext';
+import { getDeviceId } from '../hooks/useAuth';
 import { useInstanceContext } from '../contexts/InstanceContext';
 import { useBootController } from '../hooks/useBootController.jsx';
 import { BODY_SCROLL_MODE, useBodyScrollMode } from '../hooks/useBodyScrollMode';
@@ -45,9 +46,18 @@ import {
   readSpaceTicket,
   readSpaceTicketHints,
   spaceDisplayName,
+  peekRitualsSpace,
   spaceUsernameCandidates,
   subscribeSpaceTicket,
 } from '../lib/ritualsSpace';
+import {
+  consumeDeviceJustLinked,
+  consumeLinkOffer,
+  joinLinkedDeviceChannels,
+  markEarlierMessagesElsewhere,
+  rememberLinkOffer,
+  shouldOfferDeviceLink,
+} from '../lib/ritualsSpaceLink';
 
 /** How long the page waits for a session or the space list before offering Retry. */
 const STALL_TIMEOUT_MS = 25_000;
@@ -220,6 +230,33 @@ function ErrorScreen({ kind, onRetry, retrying }) {
   );
 }
 
+/**
+ * Rituals fork: this Rituals account already has the space on another
+ * device. Offer to add this device to that identity (device linking) before
+ * creating a separate one here; "Start fresh" keeps today's path.
+ */
+function LinkOfferScreen({ onLink, onFresh }) {
+  return (
+    <SpaceScreen>
+      <div className="flex flex-col items-center gap-2">
+        <h1 className="text-xl font-semibold tracking-tight">You're already in this space</h1>
+        <p className="text-sm text-muted-foreground">
+          Add this device from your other device to be the same person here.
+        </p>
+      </div>
+      <div className="flex w-full flex-col gap-2">
+        <Button size="lg" className="w-full" onClick={onLink}>
+          <Link2Icon data-icon="inline-start" />
+          Add this device
+        </Button>
+        <Button size="lg" variant="ghost" className="w-full" onClick={onFresh}>
+          Start fresh here
+        </Button>
+      </div>
+    </SpaceScreen>
+  );
+}
+
 export default function SpacePage() {
   const navigate = useNavigate();
   const { bootState } = useBootController();
@@ -231,6 +268,8 @@ export default function SpacePage() {
   const [attempt, setAttempt] = useState(0);
   const [retrying, setRetrying] = useState(false);
   const [claim, setClaim] = useState(null);
+  const [linkDeclined, setLinkDeclined] = useState(false);
+  const [peekState, setPeekState] = useState({ ticket: null, result: null });
 
   const authRef = useRef(auth);
   authRef.current = auth;
@@ -266,8 +305,24 @@ export default function SpacePage() {
 
   // ── 1. No identity on this device: create one, no input ────────────────
   const needsIdentity = bootState === 'needs_login' && !auth.hasVault;
+  // Rituals fork: before creating an identity, ask hush-server (peek, ticket
+  // verified, no session) whether this account is already seated from
+  // another device. Never throws; null (404, error, timeout) → provision as
+  // before. Provisioning waits until the peek for this ticket has settled.
+  const peekSettled = Boolean(ticket) && peekState.ticket === ticket;
   useEffect(() => {
-    if (!ticket || errorKind || !needsIdentity) return undefined;
+    if (!ticket || errorKind || !needsIdentity || peekState.ticket === ticket) return undefined;
+    let cancelled = false;
+    peekRitualsSpace(ticket, spaceInstanceUrl()).then((result) => {
+      if (!cancelled) setPeekState({ ticket, result });
+    });
+    return () => { cancelled = true; };
+  }, [ticket, errorKind, needsIdentity, peekState.ticket]);
+  const peek = peekSettled ? peekState.result : null;
+  const offerLink = needsIdentity && !linkDeclined && peekSettled
+    && shouldOfferDeviceLink({ hasIdentity: auth.hasVault, peek });
+  useEffect(() => {
+    if (!ticket || errorKind || !needsIdentity || !peekSettled || offerLink) return undefined;
     let cancelled = false;
     const usernames = spaceUsernameCandidates(hints);
     const displayName = spaceDisplayName(hints, usernames[0]);
@@ -284,7 +339,7 @@ export default function SpacePage() {
       fail(classifySpaceError(err));
     });
     return () => { cancelled = true; };
-  }, [ticket, errorKind, needsIdentity, hints, attempt, fail]);
+  }, [ticket, errorKind, needsIdentity, peekSettled, offerLink, hints, attempt, fail]);
 
   // ── 2. Signed in: claim the seat (idempotent) ──────────────────────────
   const signedIn = bootState === 'ready' || bootState === 'booted';
@@ -336,6 +391,27 @@ export default function SpacePage() {
         fail('network');
         return;
       }
+      // Rituals fork: right after a device link, join the MLS group of every
+      // channel in the spaces this identity is seated in (background, per
+      // channel mutex; channels already joined are skipped).
+      const linkedAt = consumeDeviceJustLinked();
+      const offer = consumeLinkOffer();
+      if (linkedAt != null) {
+        if (claim.othersSeated === true || offer?.othersSeated === true) {
+          markEarlierMessagesElsewhere(claim.serverId, linkedAt);
+        }
+        const current = authRef.current;
+        const serverIds = mergedGuildsRef.current
+          .filter((g) => !g.instanceUrl || normalizeInstanceUrl(g.instanceUrl) === normalizeInstanceUrl(instanceUrl))
+          .map((g) => g.id);
+        joinLinkedDeviceChannels({
+          userId: current.user?.id,
+          deviceId: getDeviceId(),
+          token: current.token,
+          baseUrl: instanceUrl,
+          serverIds,
+        }).catch((err) => console.warn('[space] joining channels after link failed:', err));
+      }
       clearSpaceTicket(ticket);
       const host = new URL(instanceUrl).host;
       const ref = buildGuildRouteRef('space', claim.serverId);
@@ -349,12 +425,12 @@ export default function SpacePage() {
 
   // ── Watchdog: never spin forever (offline unlock, slow boot) ────────────
   useEffect(() => {
-    if (!ticket || errorKind) return undefined;
+    if (!ticket || errorKind || offerLink) return undefined;
     if (bootState === 'needs_pin' || bootState === 'pin_setup') return undefined;
     if (bootState === 'needs_login' && auth.hasVault) return undefined;
     const timer = setTimeout(() => fail('network'), STALL_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [ticket, errorKind, bootState, auth.hasVault, attempt, fail]);
+  }, [ticket, errorKind, offerLink, bootState, auth.hasVault, attempt, fail]);
 
   const retry = useCallback(async () => {
     setRetrying(true);
@@ -383,6 +459,17 @@ export default function SpacePage() {
   }
 
   const spaceName = hints?.name?.trim() || null;
+  if (offerLink) {
+    return (
+      <LinkOfferScreen
+        onLink={() => {
+          rememberLinkOffer({ othersSeated: peek?.othersSeated === true });
+          navigate('/link-device?mode=new');
+        }}
+        onFresh={() => setLinkDeclined(true)}
+      />
+    );
+  }
   if (needsIdentity) {
     return <ProgressScreen title="Opening the space" detail={spaceName ?? 'Setting up this device…'} />;
   }

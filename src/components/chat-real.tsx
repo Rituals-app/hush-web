@@ -56,9 +56,14 @@ import {
   type UploadEntry,
 } from "@/hooks/useAttachmentUploader"
 import type { AttachmentRef, GifRef, MessageEnvelopeV1 } from "@/lib/messageEnvelope"
+import { earlierMessagesElsewhereBefore } from "@/lib/ritualsSpaceLink"
 
 const RECOVERY_PLACEHOLDER =
   "Sent before this device joined the space. End-to-end encryption keeps it private."
+// Rituals fork: shown instead for a message sent before this device was linked
+// into a space that other people already shared (othersSeated). A message
+// after the link that fails to decrypt keeps the recovery copy.
+const LINKED_PLACEHOLDER = "Earlier messages are on your other device."
 
 interface ServerMember {
   id: string
@@ -227,8 +232,8 @@ export function RealChat({
   const groups = React.useMemo(() => groupConsecutive(messages), [messages])
 
   const messageBodyCtx = React.useMemo<MessageBodyContext>(
-    () => ({ getToken, baseUrl }),
-    [getToken, baseUrl]
+    () => ({ getToken, baseUrl, earlierElsewhereBefore: earlierMessagesElsewhereBefore(serverId) }),
+    [getToken, baseUrl, serverId]
   )
 
   const handleDragEnter = React.useCallback((event: React.DragEvent) => {
@@ -741,6 +746,7 @@ function FollowupMessage({
 interface MessageBodyContext {
   getToken: () => string | null
   baseUrl: string
+  earlierElsewhereBefore: number | null
 }
 
 const MessageBodyContext = React.createContext<MessageBodyContext | null>(null)
@@ -750,7 +756,9 @@ function MessageBody({ message }: { message: ChatMessage }) {
   if (message.decryptionFailed || !message.envelope) {
     return (
       <span className="text-sm italic text-muted-foreground">
-        {RECOVERY_PLACEHOLDER}
+        {ctx?.earlierElsewhereBefore != null && message.timestamp < ctx.earlierElsewhereBefore
+          ? LINKED_PLACEHOLDER
+          : RECOVERY_PLACEHOLDER}
       </span>
     )
   }

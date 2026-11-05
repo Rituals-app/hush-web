@@ -26,6 +26,7 @@ import {
 } from '../lib/deviceLinking';
 import { downloadArchiveSession } from '../lib/linkArchiveSession';
 import { deleteArchive } from '../lib/linkArchiveTransport';
+import { SPACE_PATH, readSpaceTicket } from '../lib/ritualsSpace';
 
 const POLL_INITIAL_MS = 2000;
 const POLL_BACKOFF_MULTIPLIER = 1.5;
@@ -60,9 +61,19 @@ function formatCountdown(expiresAt, now = Date.now()) {
 }
 
 // Rituals fork: device linking always runs against this origin (the space
-// host); never fall back to the upstream hosted instance.
+// host); never fall back to the upstream hosted instance. The Rituals host
+// answers on two names (space.rit.al in the apps, space.rituals.app on the
+// web) backed by one server, so a request made here can be approved from
+// the other name (scan with the Space scanner, or type the code there);
+// completeDeviceLink treats the two names as one instance.
 function resolveDeviceLinkInstanceUrl(instanceUrl) {
   return normalizeInstanceUrl(instanceUrl) || window.location.origin;
+}
+
+// Rituals fork: a link started from /space (a ticket is still pending in this
+// tab) goes back there to claim the seat; otherwise home, as upstream.
+function linkedDestination() {
+  return readSpaceTicket() ? SPACE_PATH : '/';
 }
 
 function buildUnlockResumePath(location) {
@@ -475,7 +486,7 @@ export default function LinkDevice() {
       <div className="my-auto flex w-full max-w-md flex-col gap-4">
         {isNewDeviceMode ? (
           <NewDeviceLinkView
-            onLinked={() => navigate('/', { replace: true })}
+            onLinked={() => navigate(linkedDestination(), { replace: true })}
             selectedInstanceUrl={selectedInstanceUrl}
           />
         ) : (

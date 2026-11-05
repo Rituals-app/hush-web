@@ -59,11 +59,26 @@ const STORAGE_PROVIDER_STORES = [
 // transcriptVault's encrypted blob (see lib/transcriptVault.js); shipping
 // plaintext rows in the snapshot would put naked transcript data on the
 // wire (modulo the relay envelope) and at rest on the new device.
+//
+// Rituals fork (2026-11-05): the snapshot carries no MLS key material at all.
+// The credential store holds the MLS signing private key; the OpenMLS stores
+// hold the approving device's signature keys, own leaf, leaf HPKE keys,
+// epoch key pairs, unused KeyPackage private keys and epoch/message secrets.
+// A linked device makes its own MLS identity and joins groups itself, and the
+// history tier only ever reads `localPlaintext` (useMLS getCachedMessage);
+// plaintext history travels in the transcriptVault blob. Copying any of these
+// would let a revoked or compromised linked device keep decrypting for, or
+// signing as, the approving device's leaf.
+export const HISTORY_SNAPSHOT_EXCLUDED_STORES = Object.freeze([
+  STORE_CREDENTIAL,
+  ...STORAGE_PROVIDER_STORES,
+]);
+
 const HISTORY_SNAPSHOT_STORES = [
   STORE_CREDENTIAL,
   ...STORAGE_PROVIDER_STORES,
   'groupEpoch',
-];
+].filter((storeName) => !HISTORY_SNAPSHOT_EXCLUDED_STORES.includes(storeName));
 
 const CIPHERSUITE_SCOPED_STORES = [
   STORE_KEY_PACKAGES,
@@ -578,6 +593,11 @@ export async function exportHistorySnapshot(db) {
 export async function importHistorySnapshot(db, snapshot) {
   if (!snapshot?.stores) return;
 
+  // Defensive: a snapshot from an older approving device may still carry the
+  // excluded key-material stores. Clear them and never import their rows.
+  for (const storeName of HISTORY_SNAPSHOT_EXCLUDED_STORES) {
+    await clearStore(db, storeName);
+  }
   for (const storeName of HISTORY_SNAPSHOT_STORES) {
     await clearStore(db, storeName);
     const rows = Array.isArray(snapshot.stores[storeName])

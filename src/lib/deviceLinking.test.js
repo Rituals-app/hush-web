@@ -440,3 +440,54 @@ describe('claimMatchesPayloadKeys', () => {
     expect(claimMatchesPayloadKeys(undefined, undefined)).toBe(false);
   });
 });
+
+describe('transfer bundle Rituals account marker (acct)', () => {
+  const ACCT = 'a'.repeat(32) + '0123456789abcdef'.repeat(2);
+
+  it('round-trips a well-formed acct', async () => {
+    const identity = await createDeviceIdentity();
+    const bytes = await encodeTransferBundle({
+      userId: 'user-1',
+      rootPrivateKey: identity.privateKey,
+      rootPublicKey: identity.publicKey,
+      archive: null,
+      acct: ACCT,
+    });
+    const decoded = await decodeTransferBundle(bytes);
+    expect(decoded.acct).toBe(ACCT);
+  });
+
+  it('decodes a bundle without acct as acct null', async () => {
+    const identity = await createDeviceIdentity();
+    const decoded = await decodeTransferBundle(buildRawTransferBundle(identity));
+    expect(decoded.acct).toBeNull();
+  });
+
+  it('never encodes a malformed local acct', async () => {
+    const identity = await createDeviceIdentity();
+    const bytes = await encodeTransferBundle({
+      userId: 'user-1',
+      rootPrivateKey: identity.privateKey,
+      rootPublicKey: identity.publicKey,
+      archive: null,
+      acct: 'not-hex',
+    });
+    const decoded = await decodeTransferBundle(bytes);
+    expect(decoded.acct).toBeNull();
+  });
+
+  it.each([
+    ['too short', 'ab'],
+    ['uppercase hex', 'A'.repeat(64)],
+    ['non-hex', 'g'.repeat(64)],
+    ['too long', 'a'.repeat(65)],
+    ['empty', ''],
+    ['number', 42],
+  ])('rejects a bundle whose acct is %s', async (_label, acct) => {
+    const identity = await createDeviceIdentity();
+    const badBytes = buildRawTransferBundle(identity, { acct });
+    await expect(decodeTransferBundle(badBytes)).rejects.toMatchObject({
+      code: 'invalid_device_link_payload',
+    });
+  });
+});

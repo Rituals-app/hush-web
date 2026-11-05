@@ -28,6 +28,15 @@ import {
 } from '../lib/ritualsRecoveryPhrase';
 import { setRecoveryPhraseUnsaved } from '../lib/ritualsSpace';
 import {
+  currentDeviceSpaceAccount,
+  isDeviceLinkAccountMismatch,
+  isRitualsSpaceOrigin,
+  isSameLinkInstance,
+  isSpaceDeviceLink,
+  markDeviceJustLinked,
+  writeSpaceAccount,
+} from '../lib/ritualsSpaceLink';
+import {
   encryptVault,
   decryptVaultAndExportKey,
   decryptVaultWithRawKey,
@@ -1910,13 +1919,36 @@ export function useAuth() {
       // credentials" + "Device linking".
       const expectedAuthBaseUrl = normalizeInstanceUrl(baseUrl);
       const bundleAuthBaseUrl = normalizeInstanceUrl(bundle.instanceUrl);
+      // Rituals fork: the two Rituals Space origins (space.rit.al and
+      // space.rituals.app) are one host, so a link across them passes; any
+      // other disagreement still fails closed. Auth always targets this
+      // device's own origin (`expectedAuthBaseUrl`) below.
       if (
         expectedAuthBaseUrl &&
         bundleAuthBaseUrl &&
-        expectedAuthBaseUrl !== bundleAuthBaseUrl
+        !isSameLinkInstance(expectedAuthBaseUrl, bundleAuthBaseUrl)
       ) {
         throw new Error(
           'Device link instance mismatch. Restart the link from this device.',
+        );
+      }
+      // Rituals fork: one Space identity per Rituals account. Refuse a
+      // bundle from a different account than this device's ticket named.
+      // On a Rituals Space origin the binding fails closed: a device that
+      // already belongs to an account refuses a bundle without `acct`.
+      const localSpaceAccount = currentDeviceSpaceAccount();
+      const onRitualsSpaceOrigin = isRitualsSpaceOrigin(expectedAuthBaseUrl)
+        || isRitualsSpaceOrigin(typeof window !== 'undefined' ? window.location?.origin : null);
+      if (localSpaceAccount && onRitualsSpaceOrigin && !bundle.acct) {
+        throw new Error(
+          'Open the space from Rituals on your other device, then add this device again.',
+        );
+      }
+      if (isDeviceLinkAccountMismatch(bundle.acct, localSpaceAccount, {
+        requireBundleAcct: onRitualsSpaceOrigin,
+      })) {
+        throw new Error(
+          'This device belongs to another Rituals account. Open the space from Rituals on this device first.',
         );
       }
       // Prefer the caller-provided selected instance. Fall back to
@@ -2036,10 +2068,28 @@ export function useAuth() {
       await markAuthInstanceUsed(authBaseUrl);
       publishAuthenticatedSession(authResult.token, authResult.user, authBaseUrl);
       localStorage.setItem(`${VAULT_USER_KEY_PREFIX}${authResult.user.id}`, bytesToHex(bundle.rootPublicKey));
+      // Rituals fork: a Space link (Rituals Space origin, this device's own
+      // account marker, and a bundle naming that same account) keeps the
+      // no-PIN policy Space identities are created with, and marks the fresh
+      // link so /space joins every seated channel's MLS group. Anything else
+      // keeps the upstream PIN setup and never takes the approver's marker.
+      const spaceLink = isSpaceDeviceLink({
+        bundleAcct: bundle.acct,
+        localAcct: localSpaceAccount,
+        onRitualsOrigin: onRitualsSpaceOrigin,
+      });
+      if (spaceLink) {
+        writeSpaceAccount(localSpaceAccount);
+        setVaultConfig(authResult.user.id, { timeout: 'never', pinType: 'pin' });
+        localStorage.removeItem(LEGACY_VAULT_TIMEOUT_KEY);
+        localStorage.setItem(`${VAULT_USER_KEY_PREFIX}_last_user`, authResult.user.id);
+        markDeviceJustLinked();
+      }
       setHasLocalVault(true);
       setVaultState('unlocked');
       applyVaultTimeout(authResult.user.id);
-      requirePinSetup();
+      if (spaceLink) clearPinSetup();
+      else requirePinSetup();
       // P21 step 2 — write the unlocked identity from the device-link
       // bundle into the vault session key store. The keypair travelled
       // through the encrypted bundle, not via PIN, so without this the
@@ -2068,7 +2118,7 @@ export function useAuth() {
       }
       setLoading(false);
     }
-  }, [applyVaultTimeout, prepareAuthenticatedSession, publishAuthenticatedSession, requirePinSetup]);
+  }, [applyVaultTimeout, clearPinSetup, prepareAuthenticatedSession, publishAuthenticatedSession, requirePinSetup]);
 
   // ── Guest auth ─────────────────────────────────────────────────────────────
 

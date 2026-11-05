@@ -66,6 +66,7 @@ import {
   deleteExport,
 } from '../../lib/linkArchiveExportStore';
 import { deleteArchive } from '../../lib/linkArchiveTransport';
+import { readSpaceAccount } from '../../lib/ritualsSpaceLink';
 
 function extractQRPayload(raw) {
   if (typeof raw !== 'string' || !raw.trim()) return null;
@@ -446,6 +447,9 @@ export default function ApproveDeviceLinkFlow({
         rootPrivateKey: identityKeyRef.current.privateKey,
         rootPublicKey: identityKeyRef.current.publicKey,
         archive: archivePayload,
+        // Rituals fork: bind the link to this device's Rituals account so
+        // the new device refuses it under another account.
+        acct: readSpaceAccount() ?? undefined,
       });
       const certificate = await certifyDevice(
         base64ToBytes(claim.devicePublicKey),
@@ -557,6 +561,9 @@ export default function ApproveDeviceLinkFlow({
         rootPrivateKey: identityKeyRef.current.privateKey,
         rootPublicKey: identityKeyRef.current.publicKey,
         archive: archivePayload,
+        // Rituals fork: bind the link to this device's Rituals account so
+        // the new device refuses it under another account.
+        acct: readSpaceAccount() ?? undefined,
       });
       const certificate = await certifyDevice(
         base64ToBytes(claim.devicePublicKey),
