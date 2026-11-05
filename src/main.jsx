@@ -1,66 +1,28 @@
 // Rituals fork: must stay the first import (strips `/space#t=` at once).
 import './lib/ritualsSpaceBoot.js';
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
-import { QueryClientProvider } from '@tanstack/react-query';
-import { ThemeProvider } from './components/theme-provider.tsx';
-import { TooltipProvider } from './components/ui/tooltip.tsx';
-import App from './App';
-import { queryClient } from './lib/queryClient.ts';
-import { registerPWA } from './lib/pwaUpdate';
-import { applyStoredAppearancePreferences } from './lib/appearancePreferences.ts';
-import { getRendererDiagnosticLog } from './lib/diagnosticLog';
-import {
-  markDesktopShellDocument,
-  signalDesktopRendererReady,
-} from './hooks/useDesktopShell.js';
-import './styles/global.css';
+import { ensureSpaceAccount, readSpaceTicket } from './lib/ritualsSpace';
 
-/* global __HUSH_DEV_DEBUG__, __HUSH_DEBUG_TOOLBAR__, __HUSH_ERUDA__ */
-
-// Register the PWA Service Worker. Fire-and-forget — the function itself
-// guards against unsupported environments. Registration failures are
-// non-fatal: the Update Required dialog still works via its fallback path.
-// HUSHHQ-79: initialize the diagnostic ring buffer + global capture
-// once at boot. The buffer is in-memory only and never leaves the
-// device unless the user explicitly attaches it to a bug report.
-getRendererDiagnosticLog();
-
-registerPWA();
-markDesktopShellDocument();
-applyStoredAppearancePreferences();
-signalDesktopRendererReady();
-
-// Dev-only debug tools. __HUSH_DEV_DEBUG__ is a Vite define, so production
-// builds tree-shake this dynamic import and never emit the eruda chunk.
-if (
-  __HUSH_DEV_DEBUG__ &&
-  (__HUSH_DEBUG_TOOLBAR__ || __HUSH_ERUDA__)
-) {
-  import('./lib/devDebugTools').then(({ installDevDebugTools }) => {
-    installDevDebugTools({
-      enableToolbar: __HUSH_DEBUG_TOOLBAR__,
-      enableEruda: __HUSH_ERUDA__,
-    });
-  });
+// Rituals fork (2026-11-05): one local Space identity per Rituals account. The
+// check runs before any other module of the app is loaded, so nothing has
+// opened the identity databases yet when they must be cleared for a different
+// account; the app itself lives in ./appMain.jsx.
+function showSwitchBlocked() {
+  const root = document.getElementById('root');
+  if (!root) return;
+  const main = document.createElement('main');
+  main.setAttribute('style', 'max-width:28rem;margin:20vh auto;padding:0 1.5rem;font:16px/1.5 system-ui,sans-serif;text-align:center');
+  const text = document.createElement('p');
+  text.textContent = 'Another Space tab is still open on this device. Close it, then open the space again from Rituals.';
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.textContent = 'Try again';
+  retry.setAttribute('style', 'margin-top:1rem;padding:.5rem 1rem;border-radius:999px;border:1px solid currentColor;background:none;font:inherit;cursor:pointer');
+  retry.addEventListener('click', () => window.location.reload());
+  main.append(text, retry);
+  root.replaceChildren(main);
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <BrowserRouter
-      future={{
-        v7_startTransition: true,
-        v7_relativeSplatPath: true,
-      }}
-    >
-      <ThemeProvider>
-        <TooltipProvider>
-          <QueryClientProvider client={queryClient}>
-            <App />
-          </QueryClientProvider>
-        </TooltipProvider>
-      </ThemeProvider>
-    </BrowserRouter>
-  </React.StrictMode>
+ensureSpaceAccount(readSpaceTicket()).then(
+  () => import('./appMain.jsx'),
+  showSwitchBlocked,
 );

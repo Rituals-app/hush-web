@@ -16,6 +16,91 @@
 
 export const SPACE_PATH = '/space';
 export const SPACE_TICKET_STORAGE_KEY = 'rituals_space_ticket';
+/** The Rituals account (ticket `acct`) this browser's Space identity belongs to. */
+export const SPACE_ACCOUNT_KEY = 'rituals_space_account';
+const ACCOUNT_RE = /^[0-9a-f]{64}$/;
+/** Databases that point the app at an existing identity; if either survives, the newcomer could enter as the old one. */
+const IDENTITY_POINTER_DATABASES = ['hush-instances', 'hush-auth-instances'];
+
+function readStoredSpaceAccount() {
+  try {
+    return window.localStorage.getItem(SPACE_ACCOUNT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function deleteDatabase(name) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (ok) => {
+      if (!settled) {
+        settled = true;
+        resolve(ok);
+      }
+    };
+    try {
+      const request = indexedDB.deleteDatabase(name);
+      request.onsuccess = () => done(true);
+      request.onerror = () => done(false);
+      // Blocked: another tab still has it open. Give it a moment to close.
+      request.onblocked = () => setTimeout(() => done(false), 2500);
+    } catch {
+      done(false);
+    }
+  });
+}
+
+/**
+ * One local Space identity per Rituals account (2026-11-05). A ticket names its
+ * Rituals account (`acct`, opaque); when that differs from the account this
+ * browser's identity belongs to, every local Space record (identity vault, MLS
+ * state, instance registry, settings) is removed before the app starts, so the
+ * newcomer gets a fresh identity instead of entering as the previous person.
+ * Must run before the app opens any of those databases (src/main.jsx).
+ *
+ * @param {string|null} ticket
+ * @returns {Promise<'skipped'|'same'|'switched'>} rejects when another open tab
+ *   keeps the identity pointers in use
+ */
+export async function ensureSpaceAccount(ticket) {
+  if (typeof window === 'undefined' || !ticket) return 'skipped';
+  const acct = readSpaceTicketHints(ticket)?.acct;
+  if (!acct) return 'skipped';
+  if (readStoredSpaceAccount() === acct) return 'same';
+
+  let names = [];
+  try {
+    if (typeof indexedDB.databases === 'function') {
+      names = (await indexedDB.databases()).map((db) => db.name).filter(Boolean);
+    }
+  } catch {
+    names = [];
+  }
+  for (const pointer of IDENTITY_POINTER_DATABASES) if (!names.includes(pointer)) names.push(pointer);
+  const results = await Promise.all(names.map((name) => deleteDatabase(name).then((ok) => [name, ok])));
+  if (results.some(([name, ok]) => !ok && IDENTITY_POINTER_DATABASES.includes(name))) {
+    throw new Error('space_account_switch_blocked');
+  }
+
+  try {
+    window.localStorage.clear();
+  } catch {
+    // Storage unavailable: nothing to clear.
+  }
+  try {
+    window.sessionStorage.clear();
+    writeSessionTicket(ticket);
+  } catch {
+    // The ticket is still held in memory.
+  }
+  try {
+    window.localStorage.setItem(SPACE_ACCOUNT_KEY, acct);
+  } catch {
+    // Without storage every visit is a fresh identity anyway.
+  }
+  return 'switched';
+}
 export const PHRASE_UNSAVED_KEY = 'rituals_space_phrase_unsaved';
 export const RITUALS_HOME_URL = 'https://rituals.app';
 
@@ -140,9 +225,15 @@ export function installSpaceTicketListener() {
   if (typeof window === 'undefined') return;
   const onChange = () => {
     const ticket = captureSpaceTicketFromLocation({ preserveHistoryState: true });
-    if (ticket) {
-      window.dispatchEvent(new CustomEvent(TICKET_EVENT, { detail: { ticket } }));
+    if (!ticket) return;
+    // A ticket for another Rituals account: reload, so src/main.jsx runs the
+    // account check (ensureSpaceAccount) before the app touches the identity.
+    const acct = readSpaceTicketHints(ticket)?.acct;
+    if (acct && acct !== readStoredSpaceAccount()) {
+      window.location.reload();
+      return;
     }
+    window.dispatchEvent(new CustomEvent(TICKET_EVENT, { detail: { ticket } }));
   };
   window.addEventListener('hashchange', onChange);
   window.addEventListener('popstate', onChange);
@@ -236,6 +327,7 @@ export function readSpaceTicketHints(ticket) {
       name: typeof parsed.name === 'string' ? parsed.name : undefined,
       role: typeof parsed.role === 'string' ? parsed.role : undefined,
       exp: Number.isFinite(parsed.exp) ? parsed.exp : undefined,
+      acct: typeof parsed.acct === 'string' && ACCOUNT_RE.test(parsed.acct) ? parsed.acct : undefined,
     };
   } catch {
     return null;
