@@ -15,6 +15,8 @@
  *     token: string, mlsStore, hushCrypto, api, wsClient? }
  */
 
+import { forgetTranscriptEntries } from './transcriptVault';
+
 /**
  * @typedef {object} MlsCredential
  * @property {Uint8Array} signingPrivateKey
@@ -56,6 +58,7 @@
  * @property {MlsCredential | null} [credential]
  * @property {string} [baseUrl]
  * @property {{ send: (type: string, payload: any) => void }} [wsClient]
+ * @property {(ms: number) => Promise<void>} [sleep] - test seam for retry backoff
  */
 
 // ---------------------------------------------------------------------------
@@ -166,6 +169,131 @@ async function mergeExternalCommit(deps, groupIdBytes, sigPriv, sigPub, credByte
   return mergeResult;
 }
 
+// ---------------------------------------------------------------------------
+// Rituals fork (2026-11-05): compare-and-set commit wire (LANE-EF-WIRE D10–D13,
+// D19, D20). A commit is posted with the epoch it creates (`builtOn + 1`) and
+// `parentEpoch = builtOn`; live servers ignore `parentEpoch`/`removes`.
+// ---------------------------------------------------------------------------
+
+const MAX_COMMIT_ATTEMPTS = 3;
+const EVICTION_REJOIN_WINDOW_MS = 60_000;
+const ABSENT_MEMBER_RE = /already removed|not.*member|unknown member/i;
+/** @type {Map<string, number>} channelId -> last eviction re-join (ms) */
+const evictionRejoinAt = new Map();
+
+/** @param {number} ms */
+function defaultSleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** @param {MlsDeps} deps @param {number} min @param {number} max */
+function backoff(deps, min, max) {
+  return (deps.sleep ?? defaultSleep)(min + Math.floor(Math.random() * (max - min + 1)));
+}
+
+/** @param {unknown} err */
+function isEpochConflict(err) {
+  const e = /** @type {{ status?: number, code?: string } | null} */ (err);
+  return e?.status === 409 || e?.code === 'epoch_conflict';
+}
+
+/** @param {unknown} err */
+function isEvictionError(err) {
+  const message = errorText(err);
+  return /UseAfterEviction|AfterEviction|after eviction|evicted/i.test(message);
+}
+
+/** Test seam: forget the per-channel eviction re-join bound. */
+export function resetEvictionRejoinBound() {
+  evictionRejoinAt.clear();
+}
+
+/**
+ * Post a member commit (add, remove, self-update) with the post-commit epoch,
+ * merge it, record the epoch and refresh the server's GroupInfo, mirroring
+ * joinChannelGroup. A failed PUT is logged only: the commit already carried
+ * group info.
+ *
+ * @param {MlsDeps} deps
+ * @param {string} channelId
+ * @param {Uint8Array} channelIdBytes
+ * @param {{ commitBytes: Uint8Array, groupInfoBytes: Uint8Array, epoch: number }} result
+ * @param {Array<{ userId: string, deviceId: string }>} [removes]
+ */
+async function postAndMergeCommit(deps, channelId, channelIdBytes, result, removes) {
+  const { db, token, mlsStore, hushCrypto, api } = deps;
+  const { sigPriv, sigPub, credBytes } = getCredFields(deps);
+  const builtOn = Number(result.epoch);
+
+  await api.postMLSCommit(
+    token,
+    channelId,
+    toBase64(result.commitBytes),
+    toBase64(result.groupInfoBytes),
+    builtOn + 1,
+    removes?.length ? { parentEpoch: builtOn, removes } : { parentEpoch: builtOn }
+  );
+
+  await mlsStore.preloadGroupState(db);
+  const mergeResult = await hushCrypto.mergePendingCommit(channelIdBytes, sigPriv, sigPub, credBytes);
+  await mlsStore.flushStorageCache(db);
+  if (mergeResult.epoch !== builtOn + 1) {
+    console.warn('[mlsGroup] mls_epoch_mismatch', { channelId, expected: builtOn + 1, merged: mergeResult.epoch });
+  }
+  await mlsStore.setGroupEpoch(db, channelId, mergeResult.epoch);
+  if (mergeResult.groupInfoBytes?.length) {
+    try {
+      await api.putMLSGroupInfo(token, channelId, toBase64(mergeResult.groupInfoBytes), mergeResult.epoch);
+    } catch (err) {
+      console.warn('[mlsGroup] mls_group_info_put_failed', { channelId, reason: errorText(err) });
+    }
+  }
+  return mergeResult;
+}
+
+/**
+ * Catch up; if that throws, drop the local group and re-join externally.
+ *
+ * @param {MlsDeps} deps
+ * @param {string} channelId
+ */
+async function catchupOrRejoin(deps, channelId) {
+  try {
+    await catchupCommits(deps, channelId);
+  } catch (err) {
+    console.warn('[mlsGroup] catch-up failed; re-joining channel group', { channelId, reason: errorText(err) });
+    await deps.mlsStore.deleteGroupEpoch(deps.db, channelId);
+    await joinChannelGroup(deps, channelId);
+  }
+}
+
+/**
+ * Drop local group state after an eviction error and re-join, at most once
+ * per channel per 60 s. The server answers GroupInfo only to current channel
+ * members, so a person who was really removed gets a refusal here and the
+ * original eviction error stands; only someone the server still admits (a
+ * same-device re-add) re-joins.
+ *
+ * @param {MlsDeps} deps
+ * @param {string} channelId
+ * @returns {Promise<boolean>} true when re-joined
+ */
+async function rejoinAfterEviction(deps, channelId) {
+  const now = Date.now();
+  const last = evictionRejoinAt.get(channelId);
+  if (last != null && now - last < EVICTION_REJOIN_WINDOW_MS) return false;
+  evictionRejoinAt.set(channelId, now);
+  try {
+    await deps.mlsStore.deleteGroupEpoch(deps.db, channelId);
+    // Join only, never create: an evicted leaf must not found a new group.
+    await joinChannelGroup(deps, channelId);
+    return (await deps.mlsStore.getGroupEpoch(deps.db, channelId)) != null;
+  } catch (err) {
+    console.warn('[mlsGroup] re-join after eviction refused', { channelId, reason: errorText(err) });
+    return false;
+  }
+}
+
 /**
  * Returns true when a send failure can be recovered by re-joining the
  * channel via the existing missing-group desync path.
@@ -273,6 +401,24 @@ export async function createChannelGroup(deps, channelId) {
  * @returns {Promise<void>}
  */
 export async function joinChannelGroup(deps, channelId) {
+  // Rituals fork: on 409 epoch_conflict refetch GroupInfo and retry (max 3).
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await joinChannelGroupOnce(deps, channelId);
+    } catch (err) {
+      if (!isEpochConflict(err) || attempt >= MAX_COMMIT_ATTEMPTS) throw err;
+      console.warn('[mlsGroup] external join lost an epoch race; retrying', { channelId, attempt });
+      await backoff(deps, 200, 800);
+    }
+  }
+}
+
+/**
+ * @param {MlsDeps} deps
+ * @param {string} channelId
+ * @returns {Promise<void>}
+ */
+async function joinChannelGroupOnce(deps, channelId) {
   const { db, token, mlsStore, hushCrypto, api } = deps;
   const { sigPriv, sigPub, credBytes } = getCredFields(deps);
   const channelIdBytes = channelIdToBytes(channelId);
@@ -297,7 +443,8 @@ export async function joinChannelGroup(deps, channelId) {
     channelId,
     toBase64(joinResult.commitBytes),
     toBase64(infoResult.groupInfoBytes),
-    commitEpoch
+    commitEpoch,
+    { parentEpoch: commitEpoch - 1 }
   );
 
   // Finalise the join locally so this device can decrypt subsequent traffic.
@@ -374,7 +521,7 @@ export async function joinAllChannelGroups(deps, channelIds) {
  * @returns {Promise<{ welcomeBytes: Uint8Array }>}
  */
 export async function addMemberToChannel(deps, channelId, keyPackageBytes) {
-  const { db, token, mlsStore, hushCrypto, api } = deps;
+  const { db, mlsStore, hushCrypto } = deps;
   const { sigPriv, sigPub, credBytes } = getCredFields(deps);
   const channelIdBytes = channelIdToBytes(channelId);
   const keyPackagesBytesJson = JSON.stringify([toBase64(keyPackageBytes)]);
@@ -383,24 +530,13 @@ export async function addMemberToChannel(deps, channelId, keyPackageBytes) {
   const result = await hushCrypto.addMembers(channelIdBytes, sigPriv, sigPub, credBytes, keyPackagesBytesJson);
   await mlsStore.flushStorageCache(db);
 
-  await api.postMLSCommit(
-    token,
-    channelId,
-    toBase64(result.commitBytes),
-    toBase64(result.groupInfoBytes),
-    result.epoch
-  );
-
   // Merge the pending commit so this member advances to the new epoch before
   // sending any further messages. The commit listener's self-skip assumes the
   // originator already advanced its own state; without this merge the originator
   // stays at the old epoch and its next message is encrypted there, so the
   // just-added member (who joined at the new epoch via the Welcome) can never
   // decrypt it. Mirrors performSelfUpdate. HUSHHQ-99.
-  await mlsStore.preloadGroupState(db);
-  const mergeResult = await hushCrypto.mergePendingCommit(channelIdBytes, sigPriv, sigPub, credBytes);
-  await mlsStore.flushStorageCache(db);
-  await mlsStore.setGroupEpoch(db, channelId, mergeResult.epoch);
+  await postAndMergeCommit(deps, channelId, channelIdBytes, result);
 
   return { welcomeBytes: result.welcomeBytes };
 }
@@ -411,35 +547,49 @@ export async function addMemberToChannel(deps, channelId, keyPackageBytes) {
  * @param {MlsDeps} deps
  * @param {string} channelId
  * @param {string} memberIdentity - Identity string of the member to remove
- * @returns {Promise<void>}
+ * @param {{ removes?: Array<{ userId: string, deviceId: string }>, jitterMs?: number }} [opts] - pending-removal hint for the server; optional random wait before catch-up so concurrent removers spread out
+ * @returns {Promise<{ removed: boolean }>}
  */
-export async function removeMemberFromChannel(deps, channelId, memberIdentity) {
-  const { db, token, mlsStore, hushCrypto, api } = deps;
+export async function removeMemberFromChannel(deps, channelId, memberIdentity, opts = {}) {
+  const { db, mlsStore, hushCrypto } = deps;
   const { sigPriv, sigPub, credBytes } = getCredFields(deps);
   const channelIdBytes = channelIdToBytes(channelId);
   const memberIdentitiesJson = encodeMemberIdentitiesJson([memberIdentity]);
 
-  await mlsStore.preloadGroupState(db);
-  const result = await hushCrypto.removeMembers(channelIdBytes, sigPriv, sigPub, credBytes, memberIdentitiesJson);
-  await mlsStore.flushStorageCache(db);
+  // Rituals fork (LANE-EF-WIRE D12/D13): catch up first so an absent member is
+  // really absent; one compare-and-set winner per epoch, losers retry.
+  if (opts.jitterMs) await backoff(deps, 0, opts.jitterMs);
+  await catchupOrRejoin(deps, channelId);
+  for (let attempt = 1; ; attempt++) {
+    await mlsStore.preloadGroupState(db);
+    let result;
+    try {
+      result = await hushCrypto.removeMembers(channelIdBytes, sigPriv, sigPub, credBytes, memberIdentitiesJson);
+    } catch (err) {
+      if (ABSENT_MEMBER_RE.test(errorText(err))) {
+        console.info('[mlsGroup] remove: member absent after catch-up', { channelId, reason: errorText(err) });
+        return { removed: false };
+      }
+      throw err;
+    }
+    await mlsStore.flushStorageCache(db);
 
-  await api.postMLSCommit(
-    token,
-    channelId,
-    toBase64(result.commitBytes),
-    toBase64(result.groupInfoBytes),
-    result.epoch
-  );
-
-  // Merge the pending commit so this member advances past the removal before
-  // sending any further messages. Without this the originator stays at the old
-  // epoch where the removed member still holds keys, so its next message could
-  // still be decrypted by the just-removed member. Mirrors performSelfUpdate.
-  // HUSHHQ-99.
-  await mlsStore.preloadGroupState(db);
-  const mergeResult = await hushCrypto.mergePendingCommit(channelIdBytes, sigPriv, sigPub, credBytes);
-  await mlsStore.flushStorageCache(db);
-  await mlsStore.setGroupEpoch(db, channelId, mergeResult.epoch);
+    try {
+      // Merge after the post so this member advances past the removal before
+      // sending again; at the old epoch the removed member still holds keys.
+      // Mirrors performSelfUpdate. HUSHHQ-99.
+      await postAndMergeCommit(deps, channelId, channelIdBytes, result, opts.removes);
+      return { removed: true };
+    } catch (err) {
+      if (!isEpochConflict(err)) throw err; // 400/5xx: no merge, no retry
+      if (attempt >= MAX_COMMIT_ATTEMPTS) {
+        console.warn('[mlsGroup] mls_remove_gave_up', { channelId, attempts: attempt });
+        return { removed: false };
+      }
+      await backoff(deps, 200, 800);
+      await catchupOrRejoin(deps, channelId);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -463,7 +613,7 @@ export async function encryptMessage(deps, channelId, plaintext) {
   const localId = crypto.randomUUID();
 
   // Store plaintext in local cache BEFORE encrypting.
-  await mlsStore.setLocalPlaintext(db, localId, { plaintext, timestamp: Date.now() });
+  await mlsStore.setLocalPlaintext(db, localId, { plaintext, timestamp: Date.now(), channelId });
 
   // Lazy join: if the group hasn't been set up yet (user sent before
   // joinMissingGroups finished), join now before encrypting.
@@ -478,6 +628,12 @@ export async function encryptMessage(deps, channelId, plaintext) {
     const result = await createChannelMessage(deps, channelIdBytes, sigPriv, sigPub, credBytes, plaintext);
     return { messageBytes: result.messageBytes, localId };
   } catch (err) {
+    // Rituals fork (D19a): a removed leaf the server still admits (same-device
+    // re-add) drops its group state, re-joins and resends once.
+    if (isEvictionError(err) && (await rejoinAfterEviction(deps, channelId))) {
+      const result = await createChannelMessage(deps, channelIdBytes, sigPriv, sigPub, credBytes, plaintext);
+      return { messageBytes: result.messageBytes, localId };
+    }
     if (!canRecoverMessageSend(err)) {
       throw err;
     }
@@ -643,9 +799,19 @@ export async function leaveAllChannelGroups(deps, channelIds) {
   for (const channelId of channelIds) {
     try {
       await mlsStore.deleteGroupEpoch(db, channelId);
+      // Rituals fork (D19b-d): nothing readable from a left Space stays here.
+      await mlsStore.deleteGroupStorage?.(db, channelIdToBytes(channelId));
     } catch (err) {
       console.warn('[mlsGroup] Failed to delete group epoch for channel', channelId, err);
     }
+  }
+  try {
+    const deleted = await mlsStore.deleteLocalPlaintextsForChannels?.(db, channelIds);
+    // The transcript vault holds plaintext that arrived with a linked device;
+    // the deleted ids include tag-only rows that point at it.
+    await forgetTranscriptEntries(Array.isArray(deleted) ? deleted : [], channelIds);
+  } catch (err) {
+    console.warn('[mlsGroup] Failed to delete cached plaintext for left channels', err);
   }
 }
 
@@ -662,7 +828,7 @@ export async function leaveAllChannelGroups(deps, channelIds) {
  * @returns {Promise<void>}
  */
 export async function performSelfUpdate(deps, channelId) {
-  const { db, token, mlsStore, hushCrypto, api } = deps;
+  const { db, mlsStore, hushCrypto } = deps;
   const { sigPriv, sigPub, credBytes } = getCredFields(deps);
   const channelIdBytes = channelIdToBytes(channelId);
 
@@ -670,19 +836,8 @@ export async function performSelfUpdate(deps, channelId) {
   const result = await hushCrypto.selfUpdate(channelIdBytes, sigPriv, sigPub, credBytes);
   await mlsStore.flushStorageCache(db);
 
-  await api.postMLSCommit(
-    token,
-    channelId,
-    toBase64(result.commitBytes),
-    toBase64(result.groupInfoBytes),
-    result.epoch
-  );
-
-  // Merge the pending commit into the group state.
-  await mlsStore.preloadGroupState(db);
-  const mergeResult = await hushCrypto.mergePendingCommit(channelIdBytes, sigPriv, sigPub, credBytes);
-  await mlsStore.flushStorageCache(db);
-  await mlsStore.setGroupEpoch(db, channelId, mergeResult.epoch);
+  // Post, then merge the pending commit into the group state.
+  await postAndMergeCommit(deps, channelId, channelIdBytes, result);
 }
 
 // ---------------------------------------------------------------------------

@@ -89,6 +89,12 @@ describe('createInstanceApi', () => {
     expect(apiModule.postMLSCommit).toHaveBeenCalledWith(TOKEN, 'channel-1', 'commitB64', 'groupInfoB64', 5, BASE_URL);
   });
 
+  it('forwards commit options after baseUrl to postMLSCommit', () => {
+    const opts = { parentEpoch: 4, removes: [{ userId: 'u', deviceId: 'd' }] };
+    api.postMLSCommit(TOKEN, 'channel-1', 'commitB64', 'groupInfoB64', 5, opts);
+    expect(apiModule.postMLSCommit).toHaveBeenCalledWith(TOKEN, 'channel-1', 'commitB64', 'groupInfoB64', 5, BASE_URL, opts);
+  });
+
   it('forwards baseUrl as last argument to getMLSCommitsSinceEpoch', () => {
     api.getMLSCommitsSinceEpoch(TOKEN, 'channel-1', 3);
     expect(apiModule.getMLSCommitsSinceEpoch).toHaveBeenCalledWith(TOKEN, 'channel-1', 3, 100, BASE_URL);

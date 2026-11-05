@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useMLS } from './useMLS';
+import { setTranscriptCache, clearTranscriptCache } from '../lib/transcriptVault';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -388,6 +389,51 @@ describe('useMLS', () => {
       expect(result).toEqual({ content: 'own send', timestamp: 1700000000 });
       expect(result.senderId).toBeUndefined();
     });
+
+    it('back-fills the channel tag on an untagged row', async () => {
+      mockDeps.mlsStore.getLocalPlaintext.mockResolvedValue({ plaintext: 'p', timestamp: 1 });
+      mockDeps.mlsStore.tagLocalPlaintext = vi.fn().mockResolvedValue(undefined);
+      const { getCachedMessage } = useMLS({ getStore, getToken, channelId: 'ch-1', _deps: mockDeps });
+      expect(await getCachedMessage('msg-legacy')).toEqual({ content: 'p', timestamp: 1 });
+      expect(mockDeps.mlsStore.tagLocalPlaintext).toHaveBeenCalledWith(mockDb, 'msg-legacy', 'ch-1');
+    });
+
+    it('tags a transcript-vault hit so a removal can forget it', async () => {
+      mockDeps.mlsStore.getLocalPlaintext.mockResolvedValue(null);
+      mockDeps.mlsStore.tagLocalPlaintext = vi.fn().mockResolvedValue(undefined);
+      setTranscriptCache('u-1', [{ messageId: 'msg-vault', plaintext: 'v', timestamp: 2 }]);
+      try {
+        const { getCachedMessage } = useMLS({ getStore, getToken, channelId: 'ch-1', _deps: mockDeps });
+        expect(await getCachedMessage('msg-vault')).toEqual({ content: 'v', timestamp: 2 });
+        expect(mockDeps.mlsStore.tagLocalPlaintext).toHaveBeenCalledWith(mockDb, 'msg-vault', 'ch-1');
+      } finally {
+        clearTranscriptCache();
+      }
+    });
+  });
+
+  describe('ensureChannelGroup', () => {
+    it('drops the channel group and plaintext when the server refuses with 403', async () => {
+      mockDeps.mlsStore.getGroupEpoch = vi.fn().mockResolvedValue(null);
+      mockDeps.mlsGroup.joinOrCreateChannelGroup = vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403 }));
+      mockDeps.mlsGroup.leaveAllChannelGroups = vi.fn().mockResolvedValue(undefined);
+      const { ensureChannelGroup } = useMLS({ getStore, getToken, channelId: 'ch-1', _deps: mockDeps });
+      await ensureChannelGroup();
+      expect(mockDeps.mlsGroup.leaveAllChannelGroups).toHaveBeenCalledWith(expect.any(Object), ['ch-1']);
+    });
+
+    it('keeps local state on other failures', async () => {
+      mockDeps.mlsStore.getGroupEpoch = vi.fn().mockResolvedValue(null);
+      mockDeps.mlsGroup.joinOrCreateChannelGroup = vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('down'), { status: 503 }));
+      mockDeps.mlsGroup.leaveAllChannelGroups = vi.fn().mockResolvedValue(undefined);
+      const { ensureChannelGroup } = useMLS({ getStore, getToken, channelId: 'ch-1', _deps: mockDeps });
+      await ensureChannelGroup();
+      expect(mockDeps.mlsGroup.leaveAllChannelGroups).not.toHaveBeenCalled();
+    });
   });
 
   describe('setCachedMessage', () => {
@@ -407,6 +453,7 @@ describe('useMLS', () => {
       expect(mockDeps.mlsStore.setLocalPlaintext).toHaveBeenCalledWith(mockDb, 'msg-456', {
         plaintext: 'hello world',
         timestamp: 1700000001,
+        channelId: 'ch-1',
       });
     });
 

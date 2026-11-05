@@ -161,7 +161,8 @@ export function SettingsDialog({
               <span className="hidden font-medium md:inline">
                 {active?.label}
               </span>
-              <div className="flex flex-1 justify-end md:hidden">
+              {/* Rituals fork: pr-10 keeps the Select clear of the close X. */}
+              <div className="flex flex-1 justify-end pr-10 md:hidden">
                 <Select
                   value={active?.id}
                   onValueChange={(next) => setActiveId(next)}

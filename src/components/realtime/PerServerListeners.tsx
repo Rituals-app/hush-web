@@ -5,6 +5,7 @@ import { useGuildChannelIds } from "@/hooks/useGuildChannelIds"
 import { useTextChannelMLSSubscriptions } from "@/hooks/useTextChannelMLSSubscriptions"
 import { useServerModerationEvents } from "@/adapters/useServerModerationEvents"
 import { useServerJoinEvents } from "@/adapters/useServerJoinEvents"
+import { useLegacyPlaintextTagSweep } from "@/hooks/useLegacyPlaintextTagSweep"
 import { RITUALS_HOME_URL, isEmbedded } from "@/lib/ritualsSpace"
 
 interface WsClientLike {
@@ -75,6 +76,8 @@ export function PerServerListeners({
     currentUserId,
   })
 
+  useLegacyPlaintextTagSweep({ instanceUrl, token, serverId, currentUserId, textChannelIds })
+
   useTextChannelMLSSubscriptions(
     wsClient as Parameters<typeof useTextChannelMLSSubscriptions>[0],
     textChannelIds,
@@ -94,7 +97,7 @@ export function PerServerListeners({
         // as a kick with no reason (signed sync). Say what happened and,
         // in a normal browser tab, offer the way back to Rituals (the
         // native app and the Rituals hub have their own).
-        toast.error("You're no longer in this space.", {
+        toast.error("You're no longer in this Space.", {
           description: "It belongs to a shared task in Rituals.",
           action: isEmbedded()
             ? undefined
@@ -106,7 +109,7 @@ export function PerServerListeners({
               },
         })
       } else {
-        const named = serverName ?? "this space"
+        const named = serverName ?? "this Space"
         const verb = event === "kick" ? "removed from" : "banned from"
         const message = reason
           ? `You were ${verb} ${named}: ${reason}`

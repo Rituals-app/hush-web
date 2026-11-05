@@ -784,6 +784,7 @@ export async function getLocalPlaintext(db, messageId) {
     plaintext: row.plaintext,
     timestamp: row.timestamp ?? 0,
     ...(row.senderId ? { senderId: row.senderId } : {}),
+    ...(row.channelId ? { channelId: row.channelId } : {}),
   };
 }
 
@@ -795,7 +796,7 @@ export async function getLocalPlaintext(db, messageId) {
  *
  * @param {IDBDatabase} db
  * @param {string} messageId
- * @param {{ plaintext: string, timestamp: number, senderId?: string }} payload
+ * @param {{ plaintext: string, timestamp: number, senderId?: string, channelId?: string }} payload
  * @returns {Promise<void>}
  */
 export async function setLocalPlaintext(db, messageId, payload) {
@@ -804,7 +805,157 @@ export async function setLocalPlaintext(db, messageId, payload) {
     timestamp: payload.timestamp ?? Date.now(),
   };
   if (payload.senderId) row.senderId = payload.senderId;
+  // Rituals fork (2026-11-05): the channel tag lets a removal delete this
+  // Space's rows (deleteLocalPlaintextsForChannels).
+  if (payload.channelId) row.channelId = payload.channelId;
   await put(db, 'localPlaintext', messageId, row);
+}
+
+/**
+ * Rituals fork (2026-11-05): delete every cached plaintext tagged with one of
+ * `channelIds`, including tag-only rows (see tagLocalPlaintext). Used when this
+ * person is removed from a Space, so nothing readable from it stays on the
+ * device. Rows written before the tag existed are tagged on read (useMLS
+ * getCachedMessage) and by the per-Space sweep (ritualsPlaintextTags), both
+ * by exact server message id. Only rows tagged with one of `channelIds` are
+ * deleted: an untagged legacy row is never deleted on a removal, because it
+ * cannot be shown to belong to this Space.
+ *
+ * @param {IDBDatabase} db
+ * @param {readonly string[]} channelIds
+ * @returns {Promise<string[]>} ids of the deleted rows
+ */
+export async function deleteLocalPlaintextsForChannels(db, channelIds) {
+  const wanted = new Set(channelIds);
+  if (!wanted.size) return [];
+  const rows = await getAll(db, 'localPlaintext');
+  const deleted = [];
+  for (const row of rows) {
+    const tagged = /** @type {{ key: string, channelId?: string }} */ (/** @type {unknown} */ (row));
+    if (tagged?.channelId && wanted.has(tagged.channelId)) {
+      await del(db, 'localPlaintext', tagged.key);
+      deleted.push(tagged.key);
+    }
+  }
+  return deleted;
+}
+
+/**
+ * Rituals fork (2026-11-05): record which channel a message belongs to without
+ * touching its plaintext. When the plaintext lives elsewhere (the transcript
+ * vault) this writes a tag-only row, which every reader ignores because it has
+ * no plaintext, so a removal can still find and forget that message.
+ *
+ * @param {IDBDatabase} db
+ * @param {string} messageId
+ * @param {string} channelId
+ * @returns {Promise<void>}
+ */
+export async function tagLocalPlaintext(db, messageId, channelId) {
+  const row = await get(db, 'localPlaintext', messageId);
+  if (row?.channelId) return;
+  await put(db, 'localPlaintext', messageId, { ...(row ?? {}), channelId });
+}
+
+/**
+ * Rituals fork (2026-11-05): the channel a cached row (plaintext or tag-only)
+ * is already tagged with, if any.
+ *
+ * @param {IDBDatabase} db
+ * @param {string} messageId
+ * @returns {Promise<string | undefined>}
+ */
+export async function getLocalPlaintextChannelTag(db, messageId) {
+  const row = await get(db, 'localPlaintext', messageId);
+  return row?.channelId || undefined;
+}
+
+const TAG_SWEEP_PREFIX = 'rituals-tag-sweep:';
+
+/*
+ * Rituals fork (2026-11-05, review round 4): no content or time matching.
+ * A legacy row is tagged with a Space only by an exact key: its server message
+ * id, found in that Space's channel history (ritualsPlaintextTags) or read in
+ * that channel (useMLS getCachedMessage). Rows with no such key (the random-id
+ * copy an older build cached for each self-send: crypto.randomUUID(), never
+ * sent to the server, so no history or endpoint names it) stay untagged. An
+ * untagged row is never deleted by a removal; a guessed tag could delete
+ * another Space's history for good.
+ */
+
+/**
+ * Rituals fork (2026-11-05): what the legacy tag sweep needs to know.
+ * `untagged`: ids of cached plaintexts with no channel; `tagged`: ids of rows
+ * (plaintext or tag-only) that have one; `swept`: channels already swept.
+ *
+ * @param {IDBDatabase} db
+ * @returns {Promise<{ untagged: Set<string>, tagged: Set<string>, swept: Set<string> }>}
+ */
+export async function getLocalPlaintextTagState(db) {
+  const state = { untagged: new Set(), tagged: new Set(), swept: new Set() };
+  for (const row of await getAll(db, 'localPlaintext')) {
+    const key = String(row?.key ?? '');
+    if (key.startsWith(TAG_SWEEP_PREFIX)) state.swept.add(key.slice(TAG_SWEEP_PREFIX.length));
+    else if (row?.channelId) state.tagged.add(key);
+    else if (typeof row?.plaintext === 'string') state.untagged.add(key);
+  }
+  return state;
+}
+
+/**
+ * Rituals fork (2026-11-05): remember that every legacy row of `channelId`
+ * has been tagged. The marker has no plaintext, so readers ignore it.
+ *
+ * @param {IDBDatabase} db
+ * @param {string} channelId
+ * @returns {Promise<void>}
+ */
+export async function markPlaintextTagSweep(db, channelId) {
+  await put(db, 'localPlaintext', `${TAG_SWEEP_PREFIX}${channelId}`, { sweptAt: Date.now() });
+}
+
+
+/**
+ * Rituals fork (2026-11-05): delete the OpenMLS state of one group (epoch
+ * secrets, message secrets, tree, context, own leaf, epoch key pairs, …) from
+ * IndexedDB and the in-memory cache. hush-crypto has no delete-group export;
+ * every group-scoped storage key is a 2-byte version followed by JSON that
+ * holds the group id as `"vec":[<bytes>]` (checked against hush-crypto 0.2.2),
+ * so rows are matched on that exact needle. Signature key pairs are keyed by
+ * public key and are kept.
+ *
+ * @param {IDBDatabase} db
+ * @param {Uint8Array} groupIdBytes
+ * @returns {Promise<number>} rows deleted
+ */
+export async function deleteGroupStorage(db, groupIdBytes) {
+  const needle = `"vec":[${Array.from(groupIdBytes).join(',')}]`;
+  const decoder = new TextDecoder();
+  let deleted = 0;
+  for (const storeName of STORAGE_PROVIDER_STORES) {
+    const rows = await getAll(db, storeName);
+    for (const row of rows) {
+      const key = String(row?.key ?? '');
+      const hexKey = key.startsWith('list:') ? key.slice(5) : key;
+      if (!/^[0-9a-f]*$/i.test(hexKey) || hexKey.length % 2) continue;
+      const keyText = decoder.decode(hexToKeyBytes(hexKey));
+      if (!keyText.includes(needle)) continue;
+      await del(db, storeName, key);
+      storageCache.delete(`${storeName}:${key}`);
+      deleted++;
+    }
+  }
+  return deleted;
+}
+
+/**
+ * @param {string} hex
+ * @returns {Uint8Array}
+ */
+function hexToKeyBytes(hex) {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
 }
 
 /**
@@ -823,6 +974,7 @@ export async function listAllLocalPlaintexts(db) {
       plaintext: r.plaintext,
       timestamp: r.timestamp ?? 0,
       ...(r.senderId ? { senderId: r.senderId } : {}),
+      ...(r.channelId ? { channelId: r.channelId } : {}),
     }));
 }
 

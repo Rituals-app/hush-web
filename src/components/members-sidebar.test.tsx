@@ -108,7 +108,7 @@ describe("MembersSidebar", () => {
       target: screen.getByText("Mod"),
     })
 
-    expect(screen.queryByText(/kick from server/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/remove from space/i)).not.toBeInTheDocument()
   })
 
   it("shows kick item when actor outranks target", async () => {
@@ -121,7 +121,7 @@ describe("MembersSidebar", () => {
       target: screen.getByText("Mod"),
     })
 
-    expect(screen.getByText(/kick from server/i)).toBeInTheDocument()
+    expect(screen.getByText(/remove from space/i)).toBeInTheDocument()
   })
 
   it("hides kick on the owner row regardless of actor", async () => {
@@ -133,7 +133,7 @@ describe("MembersSidebar", () => {
       target: screen.getByText("Owner"),
     })
 
-    expect(screen.queryByText(/kick from server/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/remove from space/i)).not.toBeInTheDocument()
   })
 
   it("disables Send message when no onDirectMessage handler is provided", async () => {

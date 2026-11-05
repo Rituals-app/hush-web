@@ -12,6 +12,7 @@ import {
   fetchWithAuth,
   getChannelMessages,
   leaveGuild,
+  postMLSCommit,
   listDeviceKeys,
   getHandshake,
   normalizeAudience,
@@ -1563,5 +1564,66 @@ describe('fetchWithAuth — device revocation surface', () => {
     expect(events).toEqual([]);
 
     window.removeEventListener('hush_auth_invalid', handler);
+  });
+});
+
+// ── postMLSCommit (Rituals fork: CAS fields and typed errors) ────────────────
+
+describe('postMLSCommit', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function bodyOf(mockFetch) {
+    return JSON.parse(mockFetch.mock.calls[0][1].body);
+  }
+
+  it('keeps the legacy body when no options are given', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+    vi.stubGlobal('fetch', mockFetch);
+    await postMLSCommit('t', 'ch-1', 'c', 'g', 4);
+    const body = bodyOf(mockFetch);
+    expect(body).toMatchObject({ commitBytes: 'c', groupInfo: 'g', epoch: 4 });
+    expect(body).not.toHaveProperty('parentEpoch');
+    expect(body).not.toHaveProperty('removes');
+  });
+
+  it('accepts options in place of baseUrl and sends parentEpoch and removes', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+    vi.stubGlobal('fetch', mockFetch);
+    const removes = [{ userId: 'u-1', deviceId: 'd-1' }];
+    await postMLSCommit('t', 'ch-1', 'c', 'g', 4, { parentEpoch: 3, removes });
+    expect(mockFetch.mock.calls[0][0]).toBe('/api/mls/groups/ch-1/commit');
+    expect(bodyOf(mockFetch)).toMatchObject({ epoch: 4, parentEpoch: 3, removes });
+  });
+
+  it('accepts options after a baseUrl', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+    vi.stubGlobal('fetch', mockFetch);
+    await postMLSCommit('t', 'ch-1', 'c', 'g', 4, '', { parentEpoch: 3 });
+    expect(bodyOf(mockFetch)).toMatchObject({ epoch: 4, parentEpoch: 3 });
+  });
+
+  it('throws with status, code and currentEpoch on a 409, keeping the message', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: () => Promise.resolve({ error: 'epoch_conflict', currentEpoch: 7 }),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+    const err = await postMLSCommit('t', 'ch-1', 'c', 'g', 4).catch((e) => e);
+    expect(err.message).toBe('epoch_conflict');
+    expect(err.status).toBe(409);
+    expect(err.code).toBe('epoch_conflict');
+    expect(err.currentEpoch).toBe(7);
+  });
+
+  it('keeps the fallback message when the error body is empty', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: false, status: 500, json: () => Promise.resolve({}) });
+    vi.stubGlobal('fetch', mockFetch);
+    const err = await postMLSCommit('t', 'ch-1', 'c', 'g', 4).catch((e) => e);
+    expect(err.message).toBe('postMLSCommit 500');
+    expect(err.status).toBe(500);
+    expect(err.code).toBeUndefined();
   });
 });

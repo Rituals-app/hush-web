@@ -54,8 +54,8 @@ export function createInstanceApi(baseUrl, getToken) {
       apiModule.putMLSGroupInfo(tok(token), channelId, groupInfoBase64, epoch, baseUrl),
 
     /** @param {string|null} token @param {string} channelId @param {string} commitBytesBase64 @param {string} groupInfoBase64 @param {number} epoch */
-    postMLSCommit: (token, channelId, commitBytesBase64, groupInfoBase64, epoch) =>
-      apiModule.postMLSCommit(tok(token), channelId, commitBytesBase64, groupInfoBase64, epoch, baseUrl),
+    postMLSCommit: (token, channelId, commitBytesBase64, groupInfoBase64, epoch, opts) =>
+      apiModule.postMLSCommit(tok(token), channelId, commitBytesBase64, groupInfoBase64, epoch, baseUrl, ...(opts ? [opts] : [])),
 
     /** @param {string|null} token @param {string} channelId @param {number} sinceEpoch @param {number} [limit=100] */
     getMLSCommitsSinceEpoch: (token, channelId, sinceEpoch, limit = 100) =>

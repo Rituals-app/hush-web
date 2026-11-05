@@ -44,6 +44,7 @@ import { Label } from "@/components/ui/label"
 import { UsernameHandle } from "@/components/identity/username-handle"
 import { formatUsername } from "@/lib/userLabel"
 import { cn } from "@/lib/utils"
+import { useIsMobile } from "@/hooks/use-mobile"
 
 export type MemberPresence = "online" | "idle" | "dnd" | "offline"
 export type MemberRole = "owner" | "admin" | "moderator" | "member" | "bot"
@@ -197,6 +198,7 @@ function MemberRow({
   onDirectMessage,
 }: MemberRowProps) {
   const [profileOpen, setProfileOpen] = React.useState(false)
+  const isMobile = useIsMobile()
   const [kickOpen, setKickOpen] = React.useState(false)
   const [kickReason, setKickReason] = React.useState("")
   const [kickBusy, setKickBusy] = React.useState(false)
@@ -277,17 +279,18 @@ function MemberRow({
               <ContextMenuSeparator />
               <ContextMenuItem variant="destructive" disabled>
                 <BanIcon />
-                Remove from space
+                Remove from Space
               </ContextMenuItem>
             </>
           ) : null}
         </ContextMenuContent>
       </ContextMenu>
       <PopoverContent
-        side="left"
-        align="start"
+        side={isMobile ? "bottom" : "left"}
+        align={isMobile ? "center" : "start"}
         sideOffset={12}
-        className="w-72 p-0"
+        collisionPadding={8}
+        className="w-[min(18rem,calc(100vw-1rem))] p-0"
       >
         <ProfileCard member={member} onDirectMessage={onDirectMessage} />
       </PopoverContent>
@@ -297,7 +300,7 @@ function MemberRow({
             <AlertDialogHeader>
               <AlertDialogTitle>Kick {member.name}?</AlertDialogTitle>
               <AlertDialogDescription>
-                {member.name} will be removed from this space.
+                {member.name} will be removed from this Space.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <div className="flex flex-col gap-2">

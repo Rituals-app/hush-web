@@ -26,6 +26,9 @@ export const MessageContent = memo(function MessageContent({
         "prose-pre:m-0 prose-pre:max-w-full prose-pre:overflow-x-auto prose-pre:whitespace-pre prose-pre:bg-transparent prose-pre:p-0 prose-pre:text-foreground prose-pre:[&_code]:text-foreground prose-pre:[&_pre]:text-foreground",
         "prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.85em] prose-code:before:content-none prose-code:after:content-none",
         "prose-a:text-primary",
+        // Rituals fork: Streamdown renders links as buttons (data-streamdown=link); let a long URL
+        // wrap instead of running off a narrow pane.
+        "[&_[data-streamdown=link]]:inline [&_[data-streamdown=link]]:max-w-full [&_[data-streamdown=link]]:whitespace-normal [&_[data-streamdown=link]]:[overflow-wrap:anywhere]",
         "prose-strong:text-foreground",
         "dark:prose-invert"
       )}
