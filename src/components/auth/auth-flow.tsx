@@ -18,8 +18,12 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator.tsx"
 import { cn } from "@/lib/utils.ts"
 
-import { InstanceSelector } from "@/components/auth/instance-selector"
-import { HushLogo } from "@/components/brand/HushLogo"
+import { RitualsMark } from "@/components/brand/HushLogo"
+import {
+  RITUALS_HOME_URL,
+  SPACE_SOURCE_LINKS,
+  isInRitualsHost,
+} from "@/lib/ritualsSpace"
 import { BODY_SCROLL_MODE, useBodyScrollMode } from "@/hooks/useBodyScrollMode"
 import { generateIdentityMnemonic } from "@/lib/bip39Identity"
 import { checkUsernameAvailable } from "@/lib/api"
@@ -75,7 +79,7 @@ export function AuthFlow({
           taller than the viewport. Works on every screen size without a
           breakpoint switch. */}
       <div className="my-auto flex w-full max-w-md flex-col items-center gap-6 self-center sm:gap-8">
-        <HushLogo className="h-10 w-10" />
+        <RitualsMark className="h-10 w-10" />
         <h1 className="text-2xl font-semibold tracking-tight">
           {titleFor(view)}
         </h1>
@@ -164,48 +168,44 @@ async function copyToClipboard(text: string): Promise<boolean> {
 function titleFor(view: AuthView): string {
   switch (view) {
     case "main":
+      return "Rituals Space"
     case "sign-in":
     case "link":
-      return "Log in to Hush"
+      return "Log in to your spaces"
     case "sign-up":
-      return "Welcome to Hush"
+      return "Welcome to Rituals Space"
   }
 }
 
+/**
+ * Rituals fork: the upstream footer carried an instance picker, a
+ * "self-hostable" line with the upstream repository and a roadmap link.
+ * Spaces always talk to this origin, so all that is left is the AGPL source
+ * link and the version.
+ */
 function PanelFooter({
-  instanceProps,
-  onOpenRoadmap,
   versionLabel,
 }: {
-  instanceProps: InstanceProps
+  instanceProps?: InstanceProps
   onOpenRoadmap?: () => void
   versionLabel: string
 }) {
   return (
     <div className="flex flex-col gap-3">
-      <InstanceSelector {...instanceProps} />
       <Separator />
       <p className="text-center text-xs text-muted-foreground">
-        Hush is open source and self-hostable.{" "}
         <a
           className="font-medium underline-offset-4 hover:underline"
-          href="https://github.com/hushhq/hush"
+          href={SPACE_SOURCE_LINKS.index}
           target="_blank"
           rel="noreferrer noopener"
         >
-          github
-        </a>{" "}
-        ·{" "}
-        <button
-          type="button"
-          onClick={onOpenRoadmap}
-          className="font-medium underline-offset-4 hover:underline"
-        >
-          roadmap
-        </button>
-      </p>
-      <p className="text-center font-mono text-[10px] text-muted-foreground/70">
-        {versionLabel}
+          Source
+        </a>
+        <span aria-hidden className="px-1.5">·</span>
+        <span className="font-mono text-[10px] text-muted-foreground/70">
+          {versionLabel}
+        </span>
       </p>
     </div>
   )
@@ -230,9 +230,14 @@ function MainPanel({
 }) {
   return (
     <div className="flex flex-col gap-4">
+      <p className="text-center text-sm text-muted-foreground">
+        Spaces open from a shared task in Rituals. If you already use spaces
+        on another device, log in with your recovery phrase or link this
+        device.
+      </p>
       <Button size="lg" className="h-12 w-full" onClick={onSignIn}>
         <LogInIcon />
-        Log in
+        Log in with recovery phrase
       </Button>
       <Button
         size="lg"
@@ -243,16 +248,21 @@ function MainPanel({
         <Link2Icon />
         Link to existing device
       </Button>
-      <p className="text-center text-sm text-muted-foreground">
-        Don&apos;t have an account?{" "}
-        <button
-          type="button"
-          onClick={onSignUp}
-          className="font-semibold text-foreground underline-offset-4 hover:underline"
-        >
-          Sign up
-        </button>
-      </p>
+      {/* Rituals fork: no "Sign up" here. A new identity is created on its
+          own when someone opens a space from Rituals (the signed ticket is
+          its invitation); this server takes no other registrations. */}
+      {isInRitualsHost() ? null : (
+        <p className="text-center text-sm text-muted-foreground">
+          New here?{" "}
+          <a
+            href={RITUALS_HOME_URL}
+            className="font-semibold text-foreground underline-offset-4 hover:underline"
+          >
+            Open Rituals
+          </a>{" "}
+          and tap the people on a shared task.
+        </p>
+      )}
       {onBackToPin ? (
         // Surfaced only when the user landed here by clicking "Not you?
         // Sign in" on the PIN unlock panel. Lets them step back to PIN
@@ -455,9 +465,8 @@ function LinkDevicePanel({
       <div className="flex flex-col gap-1">
         <h2 className="text-base font-semibold">Link this device</h2>
         <p className="text-sm text-muted-foreground">
-          Pair this device with an existing Hush account by scanning a QR
-          code or entering a one-time code from a device you are already
-          signed in on.
+          Use your spaces on this device by scanning a QR code or entering
+          a one-time code from a device you are already signed in on.
         </p>
       </div>
 

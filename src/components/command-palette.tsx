@@ -7,11 +7,8 @@ import {
   SettingsIcon,
   LogOutIcon,
   PlusIcon,
-  CompassIcon,
-  UserPlusIcon,
   ShieldAlertIcon,
   KeyboardIcon,
-  RefreshCwIcon,
 } from "lucide-react"
 
 import {
@@ -49,6 +46,7 @@ interface CommandPaletteProps {
   onToggleMute: () => void
   onGoHome: () => void
   onOpenCheatSheet: () => void
+  /** Rituals fork: accepted but ignored (no server creation or discovery). */
   onDiscoverServers?: () => void
   onCreateServer?: () => void
   /**
@@ -61,6 +59,7 @@ interface CommandPaletteProps {
    */
   onCreateChannel?: (kind: "text" | "voice" | "category") => void
   onOpenSettings?: () => void
+  /** Rituals fork: accepted but ignored (no desktop update checks). */
   onCheckForUpdates?: () => void | Promise<void>
   onSignOut?: () => void | Promise<void>
 }
@@ -75,11 +74,8 @@ export function CommandPalette({
   onToggleMute,
   onGoHome,
   onOpenCheatSheet,
-  onDiscoverServers,
-  onCreateServer,
   onCreateChannel,
   onOpenSettings,
-  onCheckForUpdates,
   onSignOut,
 }: CommandPaletteProps) {
   const [query, setQuery] = React.useState("")
@@ -100,14 +96,14 @@ export function CommandPalette({
     <CommandDialog open={open} onOpenChange={onOpenChange}>
       <Command>
         <CommandInput
-          placeholder="Type a command or search a server / channel…"
+          placeholder="Type a command or search a space / channel…"
           value={query}
           onValueChange={setQuery}
         />
         <CommandList>
           <CommandEmpty>No matches.</CommandEmpty>
 
-          <CommandGroup heading="Navigazione">
+          <CommandGroup heading="Navigation">
             <CommandItem onSelect={runAction(onGoHome)}>
               <HomeIcon />
               <span>Go to Home</span>
@@ -124,7 +120,7 @@ export function CommandPalette({
                     </span>
                     <span>{server.name}</span>
                     <span className="ml-auto text-xs text-muted-foreground">
-                      Server
+                      Space
                     </span>
                   </CommandItem>
                 ))
@@ -152,14 +148,10 @@ export function CommandPalette({
 
           <CommandSeparator />
 
-          <CommandGroup heading="Server actions">
-            <CommandItem
-              disabled={!onCreateServer}
-              onSelect={runAction(() => onCreateServer?.())}
-            >
-              <PlusIcon />
-              <span>Create server</span>
-            </CommandItem>
+          <CommandGroup heading="Space actions">
+            {/* Rituals fork: no Create server, Discover or Invite user.
+                Spaces and who is in them come from shared tasks in
+                Rituals. */}
             <CommandItem
               disabled={!onCreateChannel}
               onSelect={runAction(() => onCreateChannel?.("text"))}
@@ -174,24 +166,6 @@ export function CommandPalette({
               <PlusIcon />
               <span>Create category</span>
             </CommandItem>
-            {/* Discover is gated behind the instance-level discovery
-                index, which is not yet shipping. Render disabled+muted
-                so the affordance signals "shipping soon" without
-                reaching the placeholder route. */}
-            <CommandItem disabled>
-              <CompassIcon />
-              <span>Discover servers</span>
-              <span className="ml-auto text-xs text-muted-foreground">
-                Shipping soon
-              </span>
-            </CommandItem>
-            {/* Per-channel invite already lives in the channel-sidebar
-                dropdown; instance-level ban requires admin guard + user
-                picker. Both render disabled to match prototype 1:1. */}
-            <CommandItem disabled>
-              <UserPlusIcon />
-              <span>Invite user</span>
-            </CommandItem>
             <CommandItem
               disabled
               className="text-destructive data-selected:bg-destructive/10 data-selected:text-destructive"
@@ -203,7 +177,7 @@ export function CommandPalette({
 
           <CommandSeparator />
 
-          <CommandGroup heading="Preferenze">
+          <CommandGroup heading="Preferences">
             <CommandItem onSelect={runAction(onToggleMute)}>
               <MicOffIcon />
               <span>Toggle mute</span>
@@ -220,15 +194,6 @@ export function CommandPalette({
             >
               <SettingsIcon />
               <span>Open settings</span>
-            </CommandItem>
-            <CommandItem
-              disabled={!onCheckForUpdates}
-              onSelect={runAction(() => {
-                void onCheckForUpdates?.()
-              })}
-            >
-              <RefreshCwIcon />
-              <span>Check for updates</span>
             </CommandItem>
             <CommandItem
               disabled={!onSignOut}

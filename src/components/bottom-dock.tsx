@@ -1,13 +1,18 @@
 import { Card } from "@/components/ui/card"
-import { GlobalBugReportButton } from "@/components/global-bug-report-button"
 import { UserMenu, type UserMenuUser } from "@/components/user-menu"
 import { VoicePip } from "@/components/voice-pip"
 import { AnimatePresence } from "framer-motion"
+
+// Rituals fork: no bug-report button here. Upstream reports go to the
+// upstream author's own server, which is not where Rituals spaces live, so
+// the entry point is gone.
 
 interface BottomDockProps {
   user: UserMenuUser
   onOpenUserSettings?: () => void
   onSignOut?: () => void | Promise<void>
+  /** Rituals fork: opens the About dialog (AGPL source notice). */
+  onOpenAbout?: () => void
   voice?: {
     channelName: string
     serverName: string
@@ -28,6 +33,7 @@ export function BottomDock({
   user,
   onOpenUserSettings,
   onSignOut,
+  onOpenAbout,
   voice,
 }: BottomDockProps) {
   return (
@@ -43,9 +49,7 @@ export function BottomDock({
           user={user}
           onOpenSettings={onOpenUserSettings}
           onSignOut={onSignOut}
-          utilityAction={
-            <GlobalBugReportButton className="size-9 shrink-0 text-muted-foreground hover:text-foreground" />
-          }
+          onOpenAbout={onOpenAbout}
         />
       </Card>
     </div>

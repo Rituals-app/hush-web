@@ -1,7 +1,8 @@
 /**
  * Verifies ChannelSidebar's admin-gated context menu items: New text/voice
- * channel and Invite people stay disabled when canAdministrate is false,
- * and surface a working dialog when admin + handler are provided.
+ * channel stay disabled when canAdministrate is false, and surface a
+ * working dialog when admin + handler are provided. (Rituals fork: the
+ * space menu has no Invite people at all.)
  *
  * DnD reorder behaviour is exercised end-to-end via the
  * useChannelsForServer adapter test; this file focuses on the
@@ -116,28 +117,18 @@ describe("ChannelSidebar", () => {
     expect(screen.getByText(/delete channel/i)).toBeInTheDocument()
   })
 
-  it("disables Invite people when canAdministrate is false", async () => {
-    setup({ canAdministrate: false, onCreateInvite: vi.fn() })
+  // Rituals fork: Rituals owns who is in a space, so the space menu never
+  // offers Invite people, Server settings or Leave, even to admins.
+  it("never offers Invite people, Server settings or Leave", async () => {
+    setup({ canAdministrate: true })
 
     const u = userEvent.setup()
     await u.click(screen.getByRole("button", { name: /alpha/i }))
 
-    const invite = screen
-      .getByText(/invite people/i)
-      .closest("[role='menuitem']")
-    expect(invite).toHaveAttribute("data-disabled")
-  })
-
-  it("enables Invite people when canAdministrate is true", async () => {
-    setup({ canAdministrate: true, onCreateInvite: vi.fn().mockResolvedValue(null) })
-
-    const u = userEvent.setup()
-    await u.click(screen.getByRole("button", { name: /alpha/i }))
-
-    const invite = screen
-      .getByText(/invite people/i)
-      .closest("[role='menuitem']")
-    expect(invite).not.toHaveAttribute("data-disabled")
+    expect(await screen.findByText(/about rituals space/i)).toBeInTheDocument()
+    expect(screen.queryByText(/invite people/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/server settings/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/leave server/i)).not.toBeInTheDocument()
   })
 
   it("keeps Home header active while hiding server actions", async () => {
@@ -146,7 +137,7 @@ describe("ChannelSidebar", () => {
     const u = userEvent.setup()
     await u.click(screen.getByRole("button", { name: /home/i }))
 
-    expect(screen.getByText("Servers")).toBeInTheDocument()
+    expect(screen.getByText("Spaces")).toBeInTheDocument()
     expect(screen.queryByText(/server settings/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/invite people/i)).not.toBeInTheDocument()
   })

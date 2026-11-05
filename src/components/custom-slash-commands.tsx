@@ -170,12 +170,17 @@ export function createHushSlashItems(
     GIF: true,
     Poll: true,
   }
-  return items.map((item, index) => ({
-    ...item,
-    group: index < 2 ? "actions" : "formatting",
-    badge: BADGES[item.title],
-    disabled: DISABLED[item.title] ?? false,
-  }))
+  return items
+    .map((item, index) => ({
+      ...item,
+      group: (index < 2 ? "actions" : "formatting") as SlashGroup,
+      badge: BADGES[item.title],
+      disabled: DISABLED[item.title] ?? false,
+    }))
+    // Rituals fork: no GIF entry. The space host sets no Giphy key, and
+    // picked GIFs would load from Giphy's CDN (a third-party request from
+    // every viewer), so the (already disabled) entry is hidden.
+    .filter((item) => item.title !== "GIF")
 }
 
 export function partitionSlashItems(items: HushSuggestionItem[]) {

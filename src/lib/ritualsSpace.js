@@ -274,9 +274,16 @@ function randomDigits(count) {
 export function spaceUsernameCandidates(hints) {
   let base = typeof hints?.un === 'string' && USERNAME_RE.test(hints.un) ? hints.un : '';
   if (!base) base = slugifySpaceUsername(hints?.dn);
-  if (!USERNAME_RE.test(base)) base = 'member';
-  const stem = base.slice(0, SUFFIX_ROOM).replace(/[-_]+$/g, '') || 'member';
-  const out = [base];
+  const out = [];
+  let stem;
+  if (USERNAME_RE.test(base)) {
+    out.push(base);
+    stem = base.slice(0, SUFFIX_ROOM).replace(/[-_]+$/g, '') || 'member';
+  } else {
+    // Too short for a username on its own (a one- or two-letter name):
+    // every try carries the suffix ("al-4821"); nothing usable → "member".
+    stem = base ? base.slice(0, SUFFIX_ROOM) : 'member';
+  }
   const seen = new Set(out);
   while (out.length < MAX_USERNAME_ATTEMPTS) {
     const candidate = `${stem}-${randomDigits(4)}`;
@@ -360,24 +367,36 @@ export async function claimRitualsSpace(token, ticket, baseUrl = '') {
 }
 
 /**
- * Maps claim/registration failures onto the branded error states.
+ * Maps claim/registration failures onto the branded error states. The
+ * server answers every error as JSON `{"error":"<code>"}` (the code ends up
+ * in `err.message`):
+ *
+ * - claim: 400 bad_ticket; 403 ticket_expired | ticket_revoked | banned |
+ *   space_full | guest_not_allowed; 409 seat_conflict; 401.
+ * - register with the ticket as inviteCode: 400 bad_ticket, 403
+ *   ticket_expired, 403 ticket_used (the provisioning step already signs in
+ *   with the same key when that key registered; reaching here means the
+ *   ticket was used by someone else's key).
  *
  * @param {unknown} err
- * @returns {'expired'|'seat_conflict'|'banned'|'invalid'|'unavailable'|'network'}
+ * @returns {'expired'|'revoked'|'full'|'used'|'seat_conflict'|'banned'|'invalid'|'unavailable'|'network'}
  */
 export function classifySpaceError(err) {
   const status = Number(err?.status);
   const code = String(err?.code || '');
   const message = String(err?.message || '');
+  const text = `${code} ${message}`;
   if (code === 'network' || /could not reach|failed to fetch|load failed|networkerror/i.test(message)) {
     return 'network';
   }
-  if (/expired/i.test(message)) return 'expired';
-  if (status === 409 && /seat/i.test(message)) return 'seat_conflict';
-  if (/seat_conflict/i.test(message)) return 'seat_conflict';
-  if (/banned|registration blocked/i.test(message)) return 'banned';
-  if (/registration limit|registration is closed|spaces_unavailable/i.test(message)) return 'unavailable';
-  if (/bad_ticket|ticket_used|invalid|invite code/i.test(message)) return 'invalid';
+  if (/ticket_expired|\bexpired\b/i.test(text)) return 'expired';
+  if (/ticket_revoked/i.test(text)) return 'revoked';
+  if (/space_full/i.test(text)) return 'full';
+  if (/ticket_used/i.test(text)) return 'used';
+  if (/seat_conflict/i.test(text) || (status === 409 && /seat/i.test(message))) return 'seat_conflict';
+  if (/\bbanned\b|registration blocked/i.test(text)) return 'banned';
+  if (/registration limit|registration is closed|spaces_unavailable/i.test(text)) return 'unavailable';
+  if (/bad_ticket|guest_not_allowed|invalid|invite code/i.test(text)) return 'invalid';
   if (status === 400 || status === 403) return 'invalid';
   if (status === 404 || status === 503) return 'unavailable';
   // 401 (stale session), 5xx and anything unknown: worth a retry.

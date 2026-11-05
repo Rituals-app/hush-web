@@ -3,12 +3,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import QRCode from 'qrcode';
 import { ArrowLeftIcon, CopyIcon, CheckIcon } from '@radix-ui/react-icons';
 import { useAuth } from '../contexts/AuthContext';
-import { InstanceSelector } from '../components/auth/instance-selector';
-import {
-  getInstanceDisplayName,
-  HOSTED_AUTH_INSTANCE_URL,
-  normalizeInstanceUrl,
-} from '../lib/authInstanceStore';
+import { normalizeInstanceUrl } from '../lib/authInstanceStore';
 import { BODY_SCROLL_MODE, useBodyScrollMode } from '../hooks/useBodyScrollMode';
 import { getDeviceId } from '../hooks/useAuth';
 import { useAuthInstanceSelection } from '../hooks/useAuthInstanceSelection.js';
@@ -64,8 +59,10 @@ function formatCountdown(expiresAt, now = Date.now()) {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
+// Rituals fork: device linking always runs against this origin (the space
+// host); never fall back to the upstream hosted instance.
 function resolveDeviceLinkInstanceUrl(instanceUrl) {
-  return normalizeInstanceUrl(instanceUrl) || HOSTED_AUTH_INSTANCE_URL;
+  return normalizeInstanceUrl(instanceUrl) || window.location.origin;
 }
 
 function buildUnlockResumePath(location) {
@@ -74,7 +71,7 @@ function buildUnlockResumePath(location) {
 }
 
 
-function NewDeviceLinkView({ onLinked, selectedInstanceUrl, knownInstances, onSelectInstance }) {
+function NewDeviceLinkView({ onLinked, selectedInstanceUrl }) {
   const { completeDeviceLink, loading: authLoading } = useAuth();
   const [requestState, setRequestState] = useState(null);
   const [error, setError] = useState('');
@@ -403,22 +400,7 @@ function NewDeviceLinkView({ onLinked, selectedInstanceUrl, knownInstances, onSe
         </ShadcnButton>
       </div>
 
-      <div className="ld-instance-row">
-        <InstanceSelector
-          instances={knownInstances.map((i) => getInstanceDisplayName(i.url))}
-          active={getInstanceDisplayName(selectedInstanceUrl)}
-          onSelect={(label) => {
-            const match = knownInstances.find(
-              (i) => getInstanceDisplayName(i.url) === label,
-            );
-            onSelectInstance(match?.url ?? label);
-          }}
-          onAdd={(label) => {
-            const url = label.startsWith('http') ? label : `https://${label}`;
-            onSelectInstance(url);
-          }}
-        />
-      </div>
+      {/* Rituals fork: no instance picker; spaces live on this origin. */}
 
       {status && (
         <div className="ld-status text-sm text-muted-foreground">{status}</div>
@@ -474,11 +456,7 @@ export default function LinkDevice() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  const {
-    selectedInstanceUrl,
-    knownInstances,
-    chooseInstance,
-  } = useAuthInstanceSelection();
+  const { selectedInstanceUrl } = useAuthInstanceSelection();
 
   const isNewDeviceMode = searchParams.get('mode') === 'new';
   const qrPayload = useMemo(() => {
@@ -499,8 +477,6 @@ export default function LinkDevice() {
           <NewDeviceLinkView
             onLinked={() => navigate('/', { replace: true })}
             selectedInstanceUrl={selectedInstanceUrl}
-            knownInstances={knownInstances}
-            onSelectInstance={chooseInstance}
           />
         ) : (
           <ApproveLinkView

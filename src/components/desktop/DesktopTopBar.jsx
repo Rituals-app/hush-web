@@ -2,7 +2,7 @@ import { useBootController } from '../../hooks/useBootController.jsx';
 import { useInstanceContext } from '../../contexts/InstanceContext.jsx';
 import { DesktopOmnibar } from './DesktopOmnibar.jsx';
 import { DesktopTelemetry } from './DesktopTelemetry.jsx';
-import { DesktopWhatsNewButton } from './DesktopWhatsNewButton.jsx';
+// Rituals fork: no "What's new" button (upstream change announcements).
 
 /**
  * Reads the desktop bridge synchronously. The preload script runs before
@@ -136,7 +136,6 @@ export function DesktopTopBar() {
 
       <div className="hush-desktop-topbar__cluster hush-desktop-topbar__cluster--center">
         {isAuthenticated && <DesktopOmnibar platform={api.platform} />}
-        {isAuthenticated && <DesktopWhatsNewButton />}
       </div>
 
       <div className="hush-desktop-topbar__cluster hush-desktop-topbar__cluster--right">

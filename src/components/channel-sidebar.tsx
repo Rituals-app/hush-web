@@ -12,10 +12,8 @@ import {
   Volume2Icon,
   PlusIcon,
   FolderPlusIcon,
-  CompassIcon,
   ScrollTextIcon,
   ShieldAlertIcon,
-  LogOutIcon,
   PuzzleIcon,
   SettingsIcon,
   TrashIcon,
@@ -71,6 +69,8 @@ import {
   RitualsAboutDialog,
   RitualsSidebarFooterLinks,
 } from "@/components/rituals/about-dialog"
+import { RecoveryPhraseReminder } from "@/components/rituals/recovery-phrase"
+import { RITUALS_HOME_URL, isInRitualsHost } from "@/lib/ritualsSpace"
 import type { UserMenuUser } from "@/components/user-menu"
 import {
   Sheet,
@@ -97,7 +97,6 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu.tsx"
-import { APP_VERSION } from "@/utils/constants"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -210,7 +209,6 @@ interface ChannelSidebarProps {
   activeRailId: string
   onSelectRail: (id: string) => void
   voice?: JoinedVoiceInfo
-  onOpenServerSettings?: () => void
   onOpenUserSettings?: () => void
   onSignOut?: () => void | Promise<void>
   /** Create a new channel of the given kind. Resolves on success. */
@@ -261,19 +259,24 @@ export function ChannelSidebar({
   activeRailId,
   onSelectRail,
   voice,
-  onOpenServerSettings,
   onOpenUserSettings,
   onSignOut,
   onCreateChannel,
   onDeleteChannel,
   onDeleteCategory,
-  onCreateInvite,
   canAdministrate = false,
   serverMenuEnabled = true,
-  onCreateServer,
-  onDiscoverServers,
+  onOpenRecoveryPhrase,
 }: ChannelSidebarProps) {
   const { isMobile, openMobile, setOpenMobile } = useSidebar()
+  // Rituals fork: one About dialog (AGPL notice) for the space menu and the
+  // footer links under the account menu.
+  const [aboutOpen, setAboutOpen] = React.useState(false)
+  const openAbout = React.useCallback(() => {
+    // Defer so a closing dropdown / sheet can restore body pointer events
+    // before the dialog mounts (same pattern as the upstream menus).
+    window.setTimeout(() => setAboutOpen(true), 0)
+  }, [])
 
   // Mobile: closing the sheet on channel pick removes a manual close
   // step the user would otherwise hit on every navigation. The sheet
@@ -302,12 +305,7 @@ export function ChannelSidebar({
             railEntries={railEntries}
             activeRailId={activeRailId}
             onSelectRail={onSelectRail}
-            onOpenServerSettings={onOpenServerSettings}
-            onCreateInvite={onCreateInvite}
-            canAdministrate={canAdministrate}
-            menuEnabled={serverMenuEnabled}
-            onCreateServer={onCreateServer}
-            onDiscoverServers={onDiscoverServers}
+            onOpenAbout={openAbout}
           />
         </SidebarHeader>
         <SidebarContent className="show-native-scrollbar">
@@ -349,30 +347,42 @@ export function ChannelSidebar({
           {/* maybe for future: {apps.length > 0 ? <AppsSection apps={apps} /> : null} */}
         </SidebarContent>
       </div>
+      {/* Rituals fork: the gentle "Save your recovery phrase" reminder while
+          an auto-created identity's words are still unsaved. */}
+      <RecoveryPhraseReminder onSave={onOpenRecoveryPhrase} />
       <BottomDock
         user={user}
         voice={voice}
         onOpenUserSettings={onOpenUserSettings}
         onSignOut={onSignOut}
+        onOpenAbout={openAbout}
       />
+      {/* Rituals fork: Rituals home (browser tabs only), About (AGPL
+          notice) and Source. */}
+      <RitualsSidebarFooterLinks onOpenAbout={openAbout} />
     </>
   )
 
+  const about = <RitualsAboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />
+
   if (isMobile) {
     return (
-      <Sheet open={openMobile} onOpenChange={setOpenMobile}>
-        <SheetContent
-          side="left"
-          data-slot="sidebar"
-          className="flex w-72 flex-col gap-2 bg-sidebar p-2 [&>button]:hidden"
-        >
-          <SheetHeader className="sr-only">
-            <SheetTitle>Sidebar</SheetTitle>
-            <SheetDescription>Channels and direct messages.</SheetDescription>
-          </SheetHeader>
-          {inner}
-        </SheetContent>
-      </Sheet>
+      <>
+        <Sheet open={openMobile} onOpenChange={setOpenMobile}>
+          <SheetContent
+            side="left"
+            data-slot="sidebar"
+            className="flex w-72 flex-col gap-2 bg-sidebar p-2 [&>button]:hidden"
+          >
+            <SheetHeader className="sr-only">
+              <SheetTitle>Sidebar</SheetTitle>
+              <SheetDescription>Channels and direct messages.</SheetDescription>
+            </SheetHeader>
+            {inner}
+          </SheetContent>
+        </Sheet>
+        {about}
+      </>
     )
   }
 
@@ -382,6 +392,7 @@ export function ChannelSidebar({
       className="hidden h-full min-h-0 w-full flex-col gap-2 p-2 md:flex"
     >
       {inner}
+      {about}
     </aside>
   )
 }
@@ -392,61 +403,21 @@ function ServerHeader({
   railEntries,
   activeRailId,
   onSelectRail,
-  onOpenServerSettings,
-  onCreateInvite,
-  canAdministrate,
-  menuEnabled,
-  onCreateServer,
-  onDiscoverServers,
+  onOpenAbout,
 }: {
   name: string
   plan?: string
   railEntries: RailEntry[]
   activeRailId: string
   onSelectRail: (id: string) => void
-  onOpenServerSettings?: () => void
-  onCreateInvite?: () => Promise<string | null>
-  canAdministrate?: boolean
-  menuEnabled?: boolean
-  onCreateServer?: () => void
-  onDiscoverServers?: () => void
+  onOpenAbout: () => void
 }) {
-  const [leaveOpen, setLeaveOpen] = React.useState(false)
-  const [inviteOpen, setInviteOpen] = React.useState(false)
-  const [inviteUrl, setInviteUrl] = React.useState<string | null>(null)
-  const [inviteError, setInviteError] = React.useState<string | null>(null)
-  const [inviteBusy, setInviteBusy] = React.useState(false)
-  const [copied, setCopied] = React.useState(false)
-  // The Home view (menuEnabled=false) replaces the empty server-actions
-  // dropdown with an Early Bird greeting + Info entry that opens a
-  // centered modal with the project links. State lives here so the
-  // Dialog renders alongside the existing Leave / Invite dialogs.
-  const [infoOpen, setInfoOpen] = React.useState(false)
-
-  const handleInvite = React.useCallback(async () => {
-    if (!onCreateInvite) return
-    setInviteBusy(true)
-    setInviteError(null)
-    setInviteUrl(null)
-    setCopied(false)
-    setInviteOpen(true)
-    try {
-      const url = await onCreateInvite()
-      setInviteUrl(url ?? null)
-    } catch (err) {
-      setInviteError(err instanceof Error ? err.message : "Failed to create invite")
-    } finally {
-      setInviteBusy(false)
-    }
-  }, [onCreateInvite])
-
-  const handleCopy = React.useCallback(() => {
-    if (!inviteUrl) return
-    void navigator.clipboard?.writeText(inviteUrl)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1500)
-  }, [inviteUrl])
-
+  // Rituals fork: a space belongs to a shared task in Rituals, so this menu
+  // has no Add / Discover, Server settings, Invite people or Leave entries
+  // (the server refuses them for Rituals spaces anyway). What is left: the
+  // mobile space switcher, About (with the AGPL source notice) and, in a
+  // normal browser tab, a way back to Rituals.
+  const inHost = isInRitualsHost()
   return (
     <SidebarMenu>
       <SidebarMenuItem>
@@ -475,18 +446,8 @@ function ServerHeader({
           >
             <div className="md:hidden">
               <DropdownMenuLabel className="text-xs text-muted-foreground">
-                Servers
+                Spaces
               </DropdownMenuLabel>
-              {/* Mask gradient (transparent → black at 12px on
-                  each edge) was meant to feather long lists, but
-                  it always-on dimmed the first + last items even
-                  when the list was 1-2 entries and not scrollable,
-                  so it read as "sfumato" on Home + the only server.
-                  Disabled for now. Restore by re-adding the
-                  `[mask-image:linear-gradient(...)]` utility below
-                  if we ever wire a scroll-aware variant.
-                  Original:
-                  [mask-image:linear-gradient(to_bottom,transparent_0,black_12px,black_calc(100%-12px),transparent_100%)] */}
               <div className="max-h-64 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border">
                 {railEntries.map((entry) => (
                   <DropdownMenuItem
@@ -504,190 +465,23 @@ function ServerHeader({
                   </DropdownMenuItem>
                 ))}
               </div>
-              {/* Mobile-only: mirror the desktop rail bottom dock so users
-                  on a phone can create or discover servers without a
-                  dedicated FAB. Items render at the end of the rail
-                  dropdown after the home + server entries. */}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                disabled={!onCreateServer}
-                onSelect={() => onCreateServer?.()}
-              >
-                <PlusIcon className="size-4" />
-                Add server
-              </DropdownMenuItem>
-              {/* Discover is gated behind the instance-level discovery
-                  index, which is not yet shipping. Render disabled+muted
-                  to match the command-palette treatment so the
-                  affordance reads as "shipping soon" without firing the
-                  legacy handler if it's still wired upstream. */}
-              <DropdownMenuItem disabled>
-                <CompassIcon className="size-4" />
-                Discover servers
-                <span className="ml-auto text-xs text-muted-foreground">
-                  Shipping soon
-                </span>
-              </DropdownMenuItem>
-              {/* Separator between the rail-mirror actions
-                  (Add / Discover) and whatever comes next, Server
-                  group on a real server, Early Bird + Info section
-                  on Home. Render unconditionally so Home gets the
-                  same visual break. */}
               <DropdownMenuSeparator />
             </div>
-            {menuEnabled ? (
-              <>
-                <DropdownMenuLabel className="text-xs text-muted-foreground">
-                  Server
-                </DropdownMenuLabel>
-                <DropdownMenuItem
-                  disabled={!onOpenServerSettings}
-                  onSelect={() => {
-                    // Defer the dialog open so the DropdownMenu can
-                    // finish its close + body pointer-events restore
-                    // before the Dialog mounts. Stacking two Radix
-                    // overlays leaks the body lock on dismiss and
-                    // freezes the UI until reload.
-                    setTimeout(() => onOpenServerSettings?.(), 0)
-                  }}
-                >
-                  <SettingsIcon className="size-4" />
-                  Server settings
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={!canAdministrate || !onCreateInvite}
-                  onSelect={() => {
-                    setTimeout(() => void handleInvite(), 0)
-                  }}
-                >
-                  <PlusIcon className="size-4" />
-                  Invite people
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  variant="destructive"
-                  onSelect={() => {
-                    setTimeout(() => setLeaveOpen(true), 0)
-                  }}
-                >
-                  <LogOutIcon className="size-4" />
-                  Leave server
-                </DropdownMenuItem>
-              </>
-            ) : (
-              <>
-                {/* Home view: replace the empty server-actions block
-                    with an Early Bird greeting + a single Info entry
-                    that surfaces project links in a centered modal.
-                    Otherwise the Home title rendered an empty
-                    dropdown on desktop because every section was
-                    md:hidden + menuEnabled-gated. */}
-                <DropdownMenuLabel className="text-xs text-muted-foreground">
-                  Hey, Early Bird! Thank you for using Hush.
-                </DropdownMenuLabel>
-                <DropdownMenuItem
-                  onSelect={() => {
-                    setTimeout(() => setInfoOpen(true), 0)
-                  }}
-                >
-                  <InfoIcon className="size-4" />
-                  Info
-                </DropdownMenuItem>
-              </>
+            <DropdownMenuItem onSelect={() => onOpenAbout()}>
+              <InfoIcon className="size-4" />
+              About Rituals Space
+            </DropdownMenuItem>
+            {inHost ? null : (
+              <DropdownMenuItem asChild>
+                <a href={RITUALS_HOME_URL}>
+                  <ArrowUpRightIcon className="size-4" />
+                  Open Rituals
+                </a>
+              </DropdownMenuItem>
             )}
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>
-      <Dialog open={infoOpen} onOpenChange={setInfoOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader className="sr-only">
-            <DialogTitle>About Hush</DialogTitle>
-            <DialogDescription>
-              Project links for early-bird users.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col items-center gap-6 py-4">
-            <HushLogo className="size-20" />
-            <div className="flex items-center gap-3 text-sm font-medium text-foreground">
-              <a
-                href="https://github.com/hushhq/hush"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 underline-offset-4 hover:underline"
-              >
-                src
-                <ArrowUpRightIcon className="size-3.5" />
-              </a>
-              <span aria-hidden className="text-muted-foreground">
-                ·
-              </span>
-              <a
-                href="https://yarincardillo.com/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 underline-offset-4 hover:underline"
-              >
-                whoami
-                <ArrowUpRightIcon className="size-3.5" />
-              </a>
-            </div>
-            <AppVersionLines />
-          </div>
-        </DialogContent>
-      </Dialog>
-      <AlertDialog open={leaveOpen} onOpenChange={setLeaveOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Leave {name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              You will lose access to all channels and conversations in {name}.
-              Re-joining requires a new invite.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive">
-              Leave server
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Invite people to {name}</DialogTitle>
-            <DialogDescription>
-              Share this link to let new members join. Single-use unless server
-              policy allows reuse.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-3 py-2">
-            {inviteBusy ? (
-              <div className="text-sm text-muted-foreground">
-                Generating invite…
-              </div>
-            ) : inviteError ? (
-              <div className="text-sm text-destructive">{inviteError}</div>
-            ) : inviteUrl ? (
-              <div className="flex items-center gap-2">
-                <Input readOnly value={inviteUrl} className="font-mono text-xs" />
-                <Button type="button" size="sm" onClick={handleCopy}>
-                  {copied ? "Copied" : "Copy"}
-                </Button>
-              </div>
-            ) : null}
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setInviteOpen(false)}
-            >
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </SidebarMenu>
   )
 }

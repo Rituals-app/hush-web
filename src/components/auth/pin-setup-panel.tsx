@@ -110,8 +110,8 @@ export function PinSetupPanel() {
           <form className="flex flex-col gap-5" onSubmit={handleSubmit}>
             <p className="text-sm text-muted-foreground">
               Your {isPin ? "PIN" : "passphrase"} encrypts your identity key on
-              this device. You will need it to unlock Hush after closing your
-              browser.
+              this device. You will need it to unlock your spaces after
+              closing your browser.
             </p>
 
             <Tabs value={mode} onValueChange={switchMode}>
@@ -278,7 +278,7 @@ export function PinSetupPanel() {
 
             <p className="text-center text-[10px] text-muted-foreground/70">
               Without a {isPin ? "PIN" : "passphrase"}, you would need your
-              12-word recovery phrase every time you open Hush.
+              12-word recovery phrase every time you open your spaces.
             </p>
           </form>
         </Card>

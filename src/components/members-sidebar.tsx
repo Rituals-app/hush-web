@@ -277,7 +277,7 @@ function MemberRow({
               <ContextMenuSeparator />
               <ContextMenuItem variant="destructive" disabled>
                 <BanIcon />
-                Kick from server
+                Remove from space
               </ContextMenuItem>
             </>
           ) : null}
@@ -297,8 +297,7 @@ function MemberRow({
             <AlertDialogHeader>
               <AlertDialogTitle>Kick {member.name}?</AlertDialogTitle>
               <AlertDialogDescription>
-                {member.name} will be removed from the server. They can rejoin
-                via invite.
+                {member.name} will be removed from this space.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <div className="flex flex-col gap-2">
@@ -311,7 +310,7 @@ function MemberRow({
                   setKickError(null)
                 }}
                 disabled={kickBusy}
-                placeholder="Violation of server rules"
+                placeholder="Reason"
               />
               {kickError ? (
                 <div className="text-sm text-destructive">{kickError}</div>

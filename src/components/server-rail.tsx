@@ -1,29 +1,14 @@
 import * as React from "react"
 import {
   HashIcon,
-  PlusIcon,
-  CompassIcon,
   BellIcon,
   BellOffIcon,
   CheckCheckIcon,
-  SettingsIcon,
-  ShieldIcon,
-  LogOutIcon,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button.tsx"
-import { HushLogo } from "@/components/brand/HushLogo"
+import { RitualsMark } from "@/components/brand/HushLogo"
 import { cn } from "@/lib/utils"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog.tsx"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -68,6 +53,11 @@ interface ServerRailProps {
   onSelect: (target: RailSelection) => void
   /** Returns the current user's role on the given server. */
   getServerRole?: (target: ServerActionTarget) => MemberRole | undefined
+  /**
+   * Rituals fork: accepted but ignored. A space belongs to a shared task
+   * in Rituals, so the rail offers no Leave, Delete, Server settings, Add
+   * server or Discover entries (the server refuses them as well).
+   */
   onLeaveServer?: (target: ServerActionTarget) => Promise<void> | void
   onDeleteServer?: (target: ServerActionTarget) => Promise<void> | void
   onOpenServerSettings?: (target: ServerActionTarget) => void
@@ -80,11 +70,6 @@ export function ServerRail({
   activeRailTarget,
   onSelect,
   getServerRole,
-  onLeaveServer,
-  onDeleteServer,
-  onOpenServerSettings,
-  onCreateServer,
-  onDiscoverServers,
 }: ServerRailProps) {
   const scrollRootRef = React.useRef<HTMLDivElement>(null)
   const [edges, setEdges] = React.useState({ top: false, bottom: true })
@@ -146,7 +131,7 @@ export function ServerRail({
       <div className="flex flex-col items-center gap-2 pb-2">
         <RailIcon
           label="Home"
-          icon={<HushLogo className="size-5" />}
+          icon={<RitualsMark className="size-5" />}
           active={activeRailTarget === "home"}
           onClick={() => onSelect("home")}
         />
@@ -171,9 +156,6 @@ export function ServerRail({
                   id: server.id,
                   instanceUrl: server.instanceUrl,
                 })}
-                onLeave={onLeaveServer}
-                onDelete={onDeleteServer}
-                onOpenSettings={onOpenServerSettings}
               />
             ))}
           </div>
@@ -201,21 +183,8 @@ export function ServerRail({
           }}
         />
       </div>
-      <div className="flex flex-col items-center gap-2 pt-2">
-        <RailDivider />
-        <RailIcon
-          label="Add server"
-          icon={<PlusIcon className="size-5" />}
-          muted
-          onClick={onCreateServer}
-        />
-        <RailIcon
-          label="Discover (Shipping soon)"
-          icon={<CompassIcon className="size-5" />}
-          muted
-          disabled
-        />
-      </div>
+      {/* Rituals fork: no Add server / Discover here. Spaces are created
+          by Rituals, one per shared task. */}
     </aside>
   )
 }
@@ -224,34 +193,21 @@ function RailServer({
   server,
   active,
   onClick,
-  role,
-  onLeave,
-  onDelete,
-  onOpenSettings,
 }: {
   server: Server
   active: boolean
   onClick: (target: ServerActionTarget) => void
   role?: MemberRole
-  onLeave?: (target: ServerActionTarget) => Promise<void> | void
-  onDelete?: (target: ServerActionTarget) => Promise<void> | void
-  onOpenSettings?: (target: ServerActionTarget) => void
 }) {
   const target: ServerActionTarget = {
     id: server.id,
     instanceUrl: server.instanceUrl,
   }
-  const [leaveOpen, setLeaveOpen] = React.useState(false)
-  const [deleteOpen, setDeleteOpen] = React.useState(false)
-  const isOwner = role === "owner"
-  // Anyone non-owner sees Leave; owners see Delete instead. Without a
-  // known role we still render Leave (matches prototype: every server
-  // exposes a way to disengage) but disable it if no handler is wired.
-  const canDelete = isOwner && Boolean(onDelete)
-  const canLeave = !isOwner && Boolean(onLeave)
-  const canOpenSettings =
-    role === "owner" || role === "admin" || (active && !role)
 
+  // Rituals fork: the context menu keeps only the name and the (still
+  // backend-less, disabled) notification entries. No Server settings,
+  // Privacy settings, Leave or Delete: a space belongs to a shared task in
+  // Rituals, and people leave it by leaving the task there.
   return (
     <ContextMenu>
       <Tooltip>
@@ -285,15 +241,12 @@ function RailServer({
         <ContextMenuLabel className="text-xs text-muted-foreground">
           {server.name}
         </ContextMenuLabel>
-        {/* Mute presets, notification prefs, mark-as-read and privacy
-            settings ship in the prototype but have no backend handler yet
-            (no per-server mute / read-state endpoints, no privacy prefs).
-            They render disabled so the affordance matches the prototype
-            1:1 — wire each as the corresponding backend lands. */}
+        {/* Mute presets, notification prefs and mark-as-read have no
+            backend handler yet; they render disabled as upstream does. */}
         <ContextMenuSub>
           <ContextMenuSubTrigger disabled>
             <BellOffIcon className="size-4" />
-            Mute server
+            Mute space
           </ContextMenuSubTrigger>
           <ContextMenuSubContent>
             <ContextMenuItem disabled>For 15 minutes</ContextMenuItem>
@@ -310,91 +263,9 @@ function RailServer({
         </ContextMenuItem>
         <ContextMenuItem disabled>
           <CheckCheckIcon className="size-4" />
-          Mark server as read
+          Mark space as read
         </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem
-          disabled={!canOpenSettings || !onOpenSettings}
-          onSelect={() => {
-            setTimeout(() => onOpenSettings?.(target), 0)
-          }}
-        >
-          <SettingsIcon className="size-4" />
-          Server settings
-        </ContextMenuItem>
-        <ContextMenuItem disabled>
-          <ShieldIcon className="size-4" />
-          Privacy settings
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        {canDelete ? (
-          <ContextMenuItem
-            variant="destructive"
-            onSelect={() => {
-              setTimeout(() => setDeleteOpen(true), 0)
-            }}
-          >
-            <LogOutIcon className="size-4" />
-            Delete server
-          </ContextMenuItem>
-        ) : (
-          <ContextMenuItem
-            variant="destructive"
-            disabled={!canLeave}
-            onSelect={() => {
-              setTimeout(() => setLeaveOpen(true), 0)
-            }}
-          >
-            <LogOutIcon className="size-4" />
-            Leave server
-          </ContextMenuItem>
-        )}
       </ContextMenuContent>
-      <AlertDialog open={leaveOpen} onOpenChange={setLeaveOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Leave {server.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              You will lose access to all channels and conversations in
-              {" "}
-              {server.name}. Re-joining requires a new invite.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => {
-                void onLeave?.(target)
-              }}
-            >
-              Leave server
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete {server.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This permanently deletes the server, its channels, and all
-              messages for every member. Cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => {
-                void onDelete?.(target)
-              }}
-            >
-              Delete forever
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </ContextMenu>
   )
 }

@@ -2,6 +2,7 @@ import * as React from "react"
 import {
   BellIcon,
   ChevronsUpDownIcon,
+  InfoIcon,
   LogOutIcon,
   SettingsIcon,
 } from "lucide-react"
@@ -48,6 +49,8 @@ interface UserMenuProps {
   onOpenSettings?: () => void
   onSignOut?: () => void | Promise<void>
   utilityAction?: React.ReactNode
+  /** Rituals fork: About Rituals Space (AGPL source notice). */
+  onOpenAbout?: () => void
 }
 
 export function UserMenu({
@@ -55,6 +58,7 @@ export function UserMenu({
   onOpenSettings,
   onSignOut,
   utilityAction,
+  onOpenAbout,
 }: UserMenuProps) {
   const [logoutOpen, setLogoutOpen] = React.useState(false)
   const [logoutBusy, setLogoutBusy] = React.useState(false)
@@ -121,6 +125,16 @@ export function UserMenu({
                   <BellIcon className="size-4" />
                   Notifications
                 </DropdownMenuItem>
+                {onOpenAbout ? (
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      setTimeout(() => onOpenAbout(), 0)
+                    }}
+                  >
+                    <InfoIcon className="size-4" />
+                    About Rituals Space
+                  </DropdownMenuItem>
+                ) : null}
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuItem

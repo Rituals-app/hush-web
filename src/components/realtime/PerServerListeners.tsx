@@ -5,6 +5,7 @@ import { useGuildChannelIds } from "@/hooks/useGuildChannelIds"
 import { useTextChannelMLSSubscriptions } from "@/hooks/useTextChannelMLSSubscriptions"
 import { useServerModerationEvents } from "@/adapters/useServerModerationEvents"
 import { useServerJoinEvents } from "@/adapters/useServerJoinEvents"
+import { RITUALS_HOME_URL, isInRitualsHost } from "@/lib/ritualsSpace"
 
 interface WsClientLike {
   on: (event: string, handler: (msg: unknown) => void) => void
@@ -88,12 +89,30 @@ export function PerServerListeners({
     refetchMembers,
     textChannelIds,
     onSelfRemoved: ({ event, reason }) => {
-      const named = serverName ?? "the server"
-      const verb = event === "kick" ? "removed from" : "banned from"
-      const message = reason
-        ? `You were ${verb} ${named}: ${reason}`
-        : `You were ${verb} ${named}.`
-      toast.error(message)
+      if (event === "kick" && !reason) {
+        // Rituals fork: a removal from the shared task in Rituals arrives
+        // as a kick with no reason (signed sync). Say what happened and,
+        // in a normal browser tab, offer the way back to Rituals (the
+        // native app has its own).
+        toast.error("You're no longer in this space.", {
+          description: "It belongs to a shared task in Rituals.",
+          action: isInRitualsHost()
+            ? undefined
+            : {
+                label: "Open Rituals",
+                onClick: () => {
+                  window.location.assign(RITUALS_HOME_URL)
+                },
+              },
+        })
+      } else {
+        const named = serverName ?? "this space"
+        const verb = event === "kick" ? "removed from" : "banned from"
+        const message = reason
+          ? `You were ${verb} ${named}: ${reason}`
+          : `You were ${verb} ${named}.`
+        toast.error(message)
+      }
       onSelfRemoved({ instanceUrl, serverId, event, reason })
     },
   })

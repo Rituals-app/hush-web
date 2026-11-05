@@ -32,6 +32,9 @@ vi.mock("@/contexts/AuthContext", () => ({
 vi.mock("@/lib/identityVault", () => ({
   getVaultConfig: (...args: unknown[]) => mockGetVaultConfig(...args),
   bytesToHex: () => "deadbeef",
+  // Rituals fork: the Security panel checks for a PIN vault before it
+  // lets the timeout change (a PIN-less identity stays on `never`).
+  checkVaultExistsInIDB: () => Promise.resolve({ exists: true, publicKeyHex: null }),
 }))
 
 // DevicesPanel pulls api + router + transparency + device label. Stub
@@ -349,7 +352,7 @@ describe("UserSettingsDialog", () => {
     expect(
       screen.getByRole("combobox", { name: /vault timeout/i })
     ).toHaveTextContent(/on app close/i)
-    expect(screen.getByText(/locks on closing hush/i)).toBeInTheDocument()
+    expect(screen.getByText(/locks on closing the app/i)).toBeInTheDocument()
     expect(screen.queryByText(/browser close/i)).not.toBeInTheDocument()
   })
 

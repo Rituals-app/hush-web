@@ -40,47 +40,13 @@ const fallback = (
   }} />
 );
 
-const PENDING_INVITE_KEY = 'hush_pending_invite';
-
-function getQueuedInvitePath() {
-  if (typeof window === 'undefined') return null;
-  let raw = null;
-  try {
-    raw = window.sessionStorage.getItem(PENDING_INVITE_KEY);
-  } catch {
-    return null;
-  }
-  if (!raw) return null;
-
-  let parsed;
-  try {
-    parsed = new URL(raw, window.location.origin);
-  } catch {
-    try {
-      window.sessionStorage.removeItem(PENDING_INVITE_KEY);
-    } catch {
-      // noop
-    }
-    return null;
-  }
-
-  const path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
-  const isInvitePath = /^\/(?:invite|join)\//.test(parsed.pathname);
-  const isSameOrigin = parsed.origin === window.location.origin;
-  try {
-    window.sessionStorage.removeItem(PENDING_INVITE_KEY);
-  } catch {
-    // noop
-  }
-
-  return isSameOrigin && isInvitePath ? path : null;
-}
-
 // ── PostLoginRedirect ─────────────────────────────────────────────────────────
 
 /**
  * Shown at "/" when the user is authenticated. Redirects to the first guild
- * (if any) or to /home (empty state). Handles ?join= invite params.
+ * (if any) or to /home (empty state). Rituals fork: no `?join=` invite
+ * params or queued invite links (spaces are entered from Rituals with a
+ * signed ticket at /space).
  *
  * This replaces the routing logic that was previously in Home.jsx's vault-state
  * effect. The BootController guarantees this only renders when auth is ready.
@@ -89,7 +55,6 @@ function PostLoginRedirect() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { mergedGuilds, guildsLoaded } = useInstanceContext();
-  const joinParam = searchParams.get('join');
   const returnTo = searchParams.get('returnTo');
 
   useEffect(() => {
@@ -104,18 +69,6 @@ function PostLoginRedirect() {
       return;
     }
 
-    // Handle invite join param - redirect immediately, don't wait for guilds.
-    if (joinParam) {
-      navigate(`/invite/${encodeURIComponent(joinParam)}`, { replace: true });
-      return;
-    }
-
-    const queuedInvitePath = getQueuedInvitePath();
-    if (queuedInvitePath) {
-      navigate(queuedInvitePath, { replace: true });
-      return;
-    }
-
     // Wait for instance boot so mergedGuilds is populated.
     if (!guildsLoaded) return;
 
@@ -125,10 +78,8 @@ function PostLoginRedirect() {
       const instanceHost = first.instanceUrl
         ? new URL(first.instanceUrl).host
         : null;
-      const guildRouteRef = buildGuildRouteRef(
-        first._localName ?? first.name ?? first.id ?? 'guild',
-        first.id,
-      );
+      // Rituals fork: a neutral slug, never a task title, in the URL path.
+      const guildRouteRef = buildGuildRouteRef('space', first.id);
       if (instanceHost) {
         navigate(`/${instanceHost}/${guildRouteRef}`, { replace: true });
         return;
@@ -136,7 +87,7 @@ function PostLoginRedirect() {
     }
 
     navigate('/home', { replace: true });
-  }, [guildsLoaded, mergedGuilds, navigate, joinParam, returnTo]);
+  }, [guildsLoaded, mergedGuilds, navigate, returnTo]);
 
   return fallback;
 }

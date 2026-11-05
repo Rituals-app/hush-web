@@ -7,7 +7,6 @@
  * - `needs_login`   → AuthFlow (mockup port wired to useAuth.performRecovery / performRegister)
  */
 import * as React from "react"
-import { useNavigate } from "react-router-dom"
 
 import { AuthFlow } from "@/components/auth/auth-flow"
 import { PinUnlockPanel } from "@/components/auth/pin-unlock-panel"
@@ -31,7 +30,6 @@ interface AuthInstanceState {
 }
 
 export function UnauthenticatedShell() {
-  const navigate = useNavigate()
   const { bootState } = useBootController() as { bootState: string }
   const auth = useAuth() as {
     performRegister: (
@@ -116,7 +114,7 @@ export function UnauthenticatedShell() {
       instanceUrl={selectedInstanceUrl}
       signIn={signIn}
       signUp={signUp}
-      onOpenRoadmap={() => navigate("/roadmap")}
+      // Rituals fork: no roadmap page (and no instance picker in AuthFlow).
       // Only forward the PIN return path when the user came here by
       // clicking "Not you? Sign in" on the unlock screen. Without an
       // existing session there is no PIN to go back to.

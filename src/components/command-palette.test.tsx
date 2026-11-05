@@ -94,39 +94,20 @@ describe("CommandPalette", () => {
     expect(onSignOut).toHaveBeenCalledTimes(1)
   })
 
-  it("invokes onCheckForUpdates from the preferences group", async () => {
-    const onCheckForUpdates = vi.fn()
-    const onOpenChange = vi.fn()
-    setup({ onCheckForUpdates, onOpenChange })
+  // Rituals fork: no Check for updates, Create server, Discover servers or
+  // Invite user entries (Rituals ships client and server together and owns
+  // which spaces exist and who is in them).
+  it("offers no update check, server creation, discovery or invites", () => {
+    setup({
+      onCheckForUpdates: vi.fn(),
+      onCreateServer: vi.fn(),
+      onDiscoverServers: vi.fn(),
+    })
 
-    await userEvent.click(screen.getByText(/check for updates/i))
-
-    expect(onCheckForUpdates).toHaveBeenCalledTimes(1)
-    expect(onOpenChange).toHaveBeenCalledWith(false)
-  })
-
-  it("disables Check for updates when desktop update handler is absent", () => {
-    setup()
-
-    const item = screen.getByText(/check for updates/i).closest("[role='option']")
-    expect(item).toHaveAttribute("data-disabled")
-  })
-
-  // Discover servers is unconditionally disabled+muted until the
-  // instance discovery index ships (see command-palette.tsx). The
-  // `onDiscoverServers` prop kept for future re-enable but is no
-  // longer wired to the item, so a click must be a no-op even when a
-  // handler is provided.
-  it("renders Discover servers as disabled regardless of handler", async () => {
-    const onDiscoverServers = vi.fn()
-    setup({ onDiscoverServers })
-
-    const discover = screen.getByText(/discover servers/i).closest(
-      "[role='option']"
-    )
-    expect(discover).toHaveAttribute("data-disabled")
-    await userEvent.click(screen.getByText(/discover servers/i))
-    expect(onDiscoverServers).not.toHaveBeenCalled()
+    expect(screen.queryByText(/check for updates/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/create server/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/discover servers/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/invite user/i)).not.toBeInTheDocument()
   })
 
   it("invokes onCreateChannel with text when Create channel is selected", async () => {

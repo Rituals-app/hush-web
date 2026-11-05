@@ -48,7 +48,7 @@ const COPY: Record<'checking' | 'downloading' | 'downloaded', CopyBlock> = {
   },
   downloaded: {
     title: 'Restarting to finish update...',
-    description: 'Hush is relaunching with the new version.',
+    description: 'The app is relaunching with the new version.',
   },
 };
 

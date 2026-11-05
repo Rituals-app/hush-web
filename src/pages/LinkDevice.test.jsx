@@ -364,11 +364,8 @@ describe('LinkDevice', () => {
     const copyBtn = codeBlock.querySelector('.ld-code-copy');
     expect(copyBtn).not.toBeNull();
     expect(copyBtn?.disabled).toBe(false);
-    // 6. instance row holds the InstanceSelector — replaced legacy
-    // AuthInstanceSelector (.ais) with the shadcn InstanceSelector.
-    const instanceRow = card.querySelector('.ld-instance-row');
-    expect(instanceRow).not.toBeNull();
-    expect(instanceRow.querySelector('button')).not.toBeNull();
+    // 6. Rituals fork: no instance row (spaces always use this origin).
+    expect(card.querySelector('.ld-instance-row')).toBeNull();
     // 7. footer: Back (left) + Regenerate (right), side-by-side. Back must
     // be the first child so it lands at the bottom-left edge.
     const footer = card.querySelector('.ld-footer');
@@ -418,14 +415,17 @@ describe('LinkDevice', () => {
     expect(codeBlock.querySelector('.ld-code-value')?.dataset.state).toBe('placeholder');
     const copyBtn = codeBlock.querySelector('.ld-code-copy');
     expect(copyBtn?.disabled).toBe(true);
-    expect(card.querySelector('.ld-instance-row')).not.toBeNull();
+    // Rituals fork: no instance row.
+    expect(card.querySelector('.ld-instance-row')).toBeNull();
     const footer = card.querySelector('.ld-footer');
     expect(footer).not.toBeNull();
     expect(footer.querySelector('.ld-back-link')).not.toBeNull();
     expect(footer.contains(screen.getByRole('button', { name: /regenerate/i }))).toBe(true);
   });
 
-  it('anchors new-device requests and QR links to the hosted instance when selection is app origin', async () => {
+  // Rituals fork: a non-http selection falls back to this page's origin,
+  // never to the upstream hosted instance.
+  it('anchors new-device requests and QR links to this origin when selection is app origin', async () => {
     authInstanceSelectionState.current = 'app://localhost';
     mockCreateDeviceIdentity.mockResolvedValue({ publicKeyBase64: 'device-public-key' });
     mockCreateSessionKeyPair.mockResolvedValue({
@@ -502,7 +502,8 @@ describe('LinkDevice', () => {
     expect(card.querySelector('.ld-divider')).not.toBeNull();
     expect(card.querySelector('.ld-code-block')).not.toBeNull();
     expect(card.querySelector('.ld-code-value')?.dataset.state).toBe('placeholder');
-    expect(card.querySelector('.ld-instance-row')).not.toBeNull();
+    // Rituals fork: no instance row.
+    expect(card.querySelector('.ld-instance-row')).toBeNull();
     expect(card.querySelector('.ld-footer')).not.toBeNull();
 
     // Resolve second request → state returns to active, regions still in place.

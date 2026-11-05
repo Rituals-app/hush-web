@@ -7,10 +7,14 @@ vi.mock("novel", () => ({
 import { createHushSlashItems } from "./custom-slash-commands"
 
 describe("createHushSlashItems", () => {
-  it("marks GIF as shipping soon and non-interactive", () => {
-    const gif = createHushSlashItems({}).find((item) => item.title === "GIF")
+  // Rituals fork: the GIF entry is hidden (no Giphy key on the space
+  // host, and GIF media would load from Giphy's CDN).
+  it("hides the GIF entry and keeps Poll as a shipping-soon action", () => {
+    const items = createHushSlashItems({})
 
-    expect(gif).toMatchObject({
+    expect(items.find((item) => item.title === "GIF")).toBeUndefined()
+    expect(items.find((item) => item.title === "Poll")).toMatchObject({
+      group: "actions",
       badge: "Shipping soon",
       disabled: true,
     })

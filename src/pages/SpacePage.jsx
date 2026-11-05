@@ -94,6 +94,21 @@ const ERROR_COPY = {
     body: 'This link has expired. Open the space again from Rituals.',
     retry: false,
   },
+  revoked: {
+    title: "You're no longer in this space",
+    body: "It belongs to a shared task in Rituals, and you're no longer on that task.",
+    retry: false,
+  },
+  full: {
+    title: 'This space is full',
+    body: "There's no room for another device in this space right now.",
+    retry: false,
+  },
+  used: {
+    title: 'This link was already used',
+    body: 'Open the space again from Rituals.',
+    retry: false,
+  },
   seat_conflict: {
     title: 'Already in this space',
     body: 'This device is already in this space as someone else.',

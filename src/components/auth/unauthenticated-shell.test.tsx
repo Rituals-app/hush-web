@@ -5,7 +5,7 @@
  * when bootState is needs_pin.
  */
 import { describe, it, expect, vi, afterEach, beforeAll } from "vitest"
-import { render, screen, cleanup, waitFor } from "@testing-library/react"
+import { render, screen, cleanup } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 
@@ -103,66 +103,17 @@ describe("UnauthenticatedShell", () => {
   it("renders the AuthFlow when bootState is needs_login", () => {
     setup("needs_login")
     expect(
-      screen.getByRole("button", { name: /^log in$/i })
+      screen.getByRole("button", { name: /^log in with recovery phrase$/i })
     ).toBeInTheDocument()
+    // Rituals fork: no sign-up entry (a space entry creates the identity).
     expect(
-      screen.getByRole("button", { name: /^sign up$/i })
-    ).toBeInTheDocument()
+      screen.queryByRole("button", { name: /^sign up$/i })
+    ).not.toBeInTheDocument()
   })
 
-  it("does not save username as display name when display name is blank", async () => {
-    useBootController.mockReturnValue({ bootState: "needs_login" })
-    const performRegister = vi.fn().mockResolvedValue(undefined)
-    useAuth.mockReturnValue({
-      ...DEFAULT_AUTH,
-      performRegister,
-      unlockVault: vi.fn(),
-      setPIN: vi.fn(),
-      skipPinSetup: vi.fn(),
-    })
-    useAuthInstanceSelection.mockReturnValue(DEFAULT_INSTANCE_STATE)
-
-    render(
-      <MemoryRouter>
-        <UnauthenticatedShell />
-      </MemoryRouter>
-    )
-
-    const u = userEvent.setup()
-    await u.click(screen.getByRole("button", { name: /^sign up$/i }))
-    await u.type(screen.getByLabelText(/^username$/i), "yarin")
-
-    await waitFor(() => {
-      expect(screen.getByText(/yarin is available/i)).toBeInTheDocument()
-    })
-
-    await u.click(screen.getByRole("button", { name: /^continue$/i }))
-    await u.click(screen.getByRole("checkbox", { name: /i have saved/i }))
-    await u.click(screen.getByRole("button", { name: /^continue$/i }))
-
-    for (const label of document.querySelectorAll<HTMLLabelElement>(
-      'label[for^="confirm-word-"]'
-    )) {
-      const match = label.textContent?.match(/#(\d+)/)
-      if (!match) continue
-      await u.type(
-        screen.getByLabelText(label.textContent ?? ""),
-        `word${match[1]}`
-      )
-    }
-
-    await u.click(screen.getByRole("button", { name: /^finish$/i }))
-
-    await waitFor(() => {
-      expect(performRegister).toHaveBeenCalledWith(
-        "yarin",
-        "",
-        Array.from({ length: 12 }, (_, i) => `word${i + 1}`).join(" "),
-        undefined,
-        "https://a.example.com"
-      )
-    })
-  })
+  // Rituals fork: the sign-up wizard has no entry point any more (a space
+  // entry from Rituals creates the identity with the ticket's names), so
+  // the upstream display-name-on-sign-up case was removed with it.
 
   it("forces AuthFlow when the user clicks Not you on the unlock panel", async () => {
     setup("needs_pin")

@@ -8,6 +8,20 @@ React web client for [Hush](https://gethush.live) - an end-to-end encrypted comm
 
 ---
 
+## Modification notice (AGPL-3.0 section 5(a))
+
+**This is a modified version of hush-web by hushhq, modified by Rituals on 2026-11-05** (branch `rituals`, based on upstream `8da7e00`). It is served as "Rituals Space" at `https://space.rit.al`, together with a modified `hush-server` (branch `rituals`) and the unmodified `hush-crypto`. It remains free software under the GNU Affero General Public License v3 (see [LICENSE](LICENSE)), with no warranty. The Corresponding Source of every deployed build is offered at `https://space.rit.al/source/` and linked from the app's About dialog.
+
+What the modification changes:
+
+- Rebranding: the product shows as "Rituals Space" with the Rituals mark, palette, type, icons, manifest and page metadata; the upstream name appears only in the legal/source notice.
+- `/space#t=<ticket>` entry: a signed Rituals ticket (taken from the URL fragment, never a path or query) creates this device's identity with no input (client-side recovery phrase, the ticket as invite code, no PIN, `never` vault timeout on the existing non-extractable session key), or unlocks the existing one, then claims the seat with `POST /api/rituals/spaces/claim` and opens the space. Settings gain "Recovery phrase" to save the auto-generated words, with a reminder until they are saved.
+- Rituals owns each space's lifecycle: no server creation, discovery, invites, join-by-invite, leaving, deleting or ownership transfer in the UI; no instance picker, roadmap, self-host footer, change announcements, upstream bug reports, desktop update prompts or download links; no GIF entry.
+- A native host bridge for the Rituals iOS and Mac apps (`window.webkit.messageHandlers.ritualsSpace`: `{type:"ready"}`, `{type:"title", title}`, and `{type:"error", reason}` for an error screen).
+- An About dialog with the AGPL notice and source links (`VITE_RITUALS_SOURCE_WEB`, `_SERVER`, `_CRYPTO` at build time; `envPrefix` also allows `VITE_RITUALS_`), and a Docker build that accepts them as build args.
+
+---
+
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 22 or later
@@ -135,6 +149,8 @@ Variables prefixed with `VITE_` are embedded in the client bundle at build time.
 | `VITE_WS_URL` | Self-host only | WebSocket URL (e.g., `wss://chat.example.com/ws`) |
 | `VITE_LIVEKIT_URL` | Legacy/manual override only | LiveKit WebSocket URL (e.g., `wss://rtc.example.com/`) |
 | `VITE_INSTANCE_NAME` | No | Display name shown in the client title |
+| `VITE_RITUALS_SOURCE_WEB`, `VITE_RITUALS_SOURCE_SERVER`, `VITE_RITUALS_SOURCE_CRYPTO` | No (Rituals fork) | Public Corresponding Source links in the About dialog; default `https://space.rit.al/source/`. Docker build args of the same names. |
+| `VITE_RITUALS_SOURCE_COMMIT` | No (Rituals fork) | Source commit shown next to the version in the About dialog |
 
 **Hosted topology:** when the SPA is served from the same origin as the API (via a reverse proxy such as `hush-server/caddy/Caddyfile.prod`), no `VITE_*` variables are needed. Vite builds with relative-path defaults (`/api`, `/ws`, `/livekit`) that route correctly through the proxy.
 

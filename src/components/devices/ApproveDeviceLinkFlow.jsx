@@ -634,9 +634,9 @@ export default function ApproveDeviceLinkFlow({
       <FlowShell mode={mode}>
         <Heading mode={mode}>Approve device link</Heading>
         <Subtitle mode={mode}>
-          This browser is recognized for your Hush account, but the vault is
-          locked in this tab. Unlock Hush, then return to approve the new
-          device.
+          This browser is recognized for your spaces account, but the vault
+          is locked in this tab. Unlock your spaces, then return to approve
+          the new device.
         </Subtitle>
         {initialPayload && (
           <div className={'text-xs text-muted-foreground'}>
@@ -680,7 +680,7 @@ export default function ApproveDeviceLinkFlow({
         )}
         {initialPayload && !hasVault && !isMissingHomeInstanceToken && (
           <div className={'text-xs text-muted-foreground'}>
-            QR request detected. This browser does not have a local Hush vault for that account.
+            QR request detected. This browser does not have a local vault for that account.
           </div>
         )}
         <ShadcnButton variant="ghost" size="lg" onClick={onCancel}>

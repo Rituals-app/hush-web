@@ -180,7 +180,7 @@ export function PinUnlockPanel({ onSwitchAccount }: PinUnlockPanelProps) {
     <div className="flex min-h-svh w-full items-center justify-center bg-background p-6">
       <div className="flex w-full max-w-md flex-col items-center gap-8">
         <HushLogo className="h-10 w-10" />
-        <h1 className="text-2xl font-semibold tracking-tight">Unlock Hush</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Unlock your spaces</h1>
         <Card className="w-full p-6">
           <div className="flex flex-col gap-5">
             <div className="flex flex-col items-center gap-3">

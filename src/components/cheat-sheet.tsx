@@ -51,7 +51,7 @@ function buildSections(modKey: string, altKey: string): ShortcutSection[] {
         },
         {
           keys: [modKey, SHIFT, "H"],
-          label: "Show / hide Hush",
+          label: "Show / hide the app",
           global: true,
         },
       ],
@@ -117,8 +117,8 @@ export function CheatSheet({
         <DialogHeader className="px-6 pt-6 pb-4">
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>
-            Hush is built keyboard-first. Switch between sections to learn the
-            full surface.
+            Spaces work well from the keyboard. Switch between sections to
+            learn the full surface.
           </DialogDescription>
         </DialogHeader>
         <Separator />
@@ -164,8 +164,8 @@ export function CheatSheet({
         </Tabs>
         <Separator />
         <p className="px-6 py-3 text-[11px] text-muted-foreground">
-          Global shortcuts require the Hush desktop build (Tauri / Electron).
-          The web version covers in-app shortcuts only.
+          Global shortcuts need a desktop app. In a browser or in Rituals,
+          in-app shortcuts work.
         </p>
       </DialogContent>
     </Dialog>

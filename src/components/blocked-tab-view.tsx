@@ -25,16 +25,16 @@ interface BlockedTabViewProps {
 export function BlockedTabView({ blockedFlow, takeOver }: BlockedTabViewProps) {
   const description =
     blockedFlow === "device-link"
-      ? "To approve this device here, take over this tab, then unlock Hush if required."
+      ? "To approve this device here, take over this tab, then unlock your spaces if required."
       : blockedFlow === "invite"
-      ? "To continue this invite here, take over this tab, then unlock Hush if required."
+      ? "To continue here, take over this tab, then unlock your spaces if required."
       : "Close the other tab or click below to use this one instead."
 
   return (
     <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center gap-6 bg-background p-6 text-center">
       <div className="flex max-w-md flex-col items-center gap-2">
         <p className="text-lg font-medium text-foreground">
-          Hush is already open in another tab.
+          Rituals Space is already open in another tab.
         </p>
         <p className="text-sm text-muted-foreground">{description}</p>
       </div>

@@ -575,7 +575,8 @@ export function AuthenticatedApp() {
         }
         await refreshGuilds(instanceUrl)
         const host = activeServer.instanceHost ?? new URL(instanceUrl).host
-        const guildRouteRef = buildGuildRouteRef(member.name, dm.id)
+        // Rituals fork: neutral slugs only; names never go in a URL path.
+        const guildRouteRef = buildGuildRouteRef("dm", dm.id)
         navigate(`/${host}/${guildRouteRef}/${dm.channelId}`)
       } catch (err) {
         console.error("createOrFindDM failed", err)
@@ -751,12 +752,8 @@ export function AuthenticatedApp() {
         return
       }
       const host = new URL(dm.instanceUrl).host
-      const name = formatUserLabel({
-        displayName: dm.otherUser?.displayName,
-        username: dm.otherUser?.username,
-        fallback: "user",
-      })
-      const ref = buildGuildRouteRef(name, dm.id)
+      // Rituals fork: neutral slug (no person's name in the URL path).
+      const ref = buildGuildRouteRef("dm", dm.id)
       navigate(`/${host}/${ref}/${channelId}`)
     },
     [dmGuilds, navigate]
@@ -765,10 +762,9 @@ export function AuthenticatedApp() {
   const navigateToServer = React.useCallback(
     (server: Server, channelId?: string) => {
       if (!server.instanceHost) return
-      const ref = buildGuildRouteRef(
-        server.raw._localName ?? server.raw.name ?? server.id,
-        server.id
-      )
+      // Rituals fork: a neutral slug. A space is named after its task, and
+      // the path reaches the host's access logs on every reload.
+      const ref = buildGuildRouteRef("space", server.id)
       navigate(channelId ? `/${server.instanceHost}/${ref}/${channelId}` : `/${server.instanceHost}/${ref}`)
     },
     [navigate]

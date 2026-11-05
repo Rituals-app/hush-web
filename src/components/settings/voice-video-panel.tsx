@@ -533,7 +533,7 @@ export function VoiceVideoPanel({
 
       <DeviceCard
         title="Behaviour"
-        description="How Hush handles your entry into voice channels on this device."
+        description="What happens when you join a voice channel on this device."
       >
         <div className="flex items-start gap-3">
           <Checkbox
@@ -731,7 +731,7 @@ export function VoiceVideoPanel({
         {!outputSelectable ? (
           <p className="text-xs text-muted-foreground">
             {isMobile
-              ? "Output routing is managed by the OS on mobile. We will surface a picker once Hush ships on React Native."
+              ? "Output routing is managed by the system on mobile. Use the system audio controls to switch."
               : "Your browser does not expose output device selection. Use the OS-level audio settings to switch."}
           </p>
         ) : null}
@@ -742,11 +742,11 @@ export function VoiceVideoPanel({
         description="Noise gate and advanced filters. Shipping soon."
       >
         <div className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium">Hush audio filters</span>
+          <span className="text-sm font-medium">Audio filters</span>
           <span className="text-xs text-muted-foreground">
             We are temporarily relying on the browser's built-in audio
-            processing. Hush-side filters will be available in an
-            upcoming release.
+            processing. Our own filters will be available in an upcoming
+            release.
           </span>
         </div>
       </DeviceCard>
@@ -760,7 +760,7 @@ export function VoiceVideoPanel({
             <span className="text-sm font-medium">Local monitor</span>
             <span className="text-xs text-muted-foreground">
               {voiceRuntime?.isInVoice
-                ? "While active, Hush deafens the room and the local loopback is the only audible path."
+                ? "While active, the room is deafened and the local loopback is the only audible path."
                 : "Plays only on this device. Does not publish to any room."}
             </span>
           </div>

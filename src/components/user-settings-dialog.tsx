@@ -2,9 +2,8 @@ import * as React from "react"
 import {
   BellIcon,
   CircleUserIcon,
-  HelpCircleIcon,
-  InfoIcon,
   KeyboardIcon,
+  KeyRoundIcon,
   LanguagesIcon,
   LockIcon,
   LogOutIcon,
@@ -43,7 +42,7 @@ import {
   type SettingsSection,
 } from "@/components/settings-dialog"
 import { useAuth } from "@/contexts/AuthContext"
-import { getVaultConfig } from "@/lib/identityVault"
+import { checkVaultExistsInIDB, getVaultConfig } from "@/lib/identityVault"
 import { DevicesPanel } from "@/components/settings/devices-panel"
 import {
   VoiceVideoPanel,
@@ -67,8 +66,11 @@ import {
   getDesktopBridge,
 } from "@/lib/desktopBridge"
 import { formatUserLabel, sanitizeDisplayName } from "@/lib/userLabel"
-import { HelpPanel } from "@/components/settings/help-panel"
-import { DesktopUpdatePanel } from "@/components/settings/desktop-update-panel"
+import { RecoveryPhrasePanel } from "@/components/rituals/recovery-phrase"
+
+// Rituals fork: no "General" (desktop update checks) and no "Help" (bug
+// reports to the upstream author's server) sections. "Recovery phrase"
+// offers the 12 words of an identity a space entry created with no input.
 
 interface UserAccountInfo {
   displayName: string
@@ -84,6 +86,8 @@ interface UserSettingsDialogProps {
   homeLogPublicKey?: string | null
   voiceRuntime?: VoiceRuntime | null
   voicePrefsScope?: string | null
+  /** Rituals fork: section to show when the dialog opens (e.g. "recovery"). */
+  initialSectionId?: string
 }
 
 export function UserSettingsDialog({
@@ -95,6 +99,7 @@ export function UserSettingsDialog({
   homeLogPublicKey,
   voiceRuntime,
   voicePrefsScope,
+  initialSectionId,
 }: UserSettingsDialogProps) {
   const groups: SettingsGroup[] = [
     { id: "account", label: "Account" },
@@ -127,6 +132,13 @@ export function UserSettingsDialog({
       content: <PlaceholderPanel title="Privacy & safety" />,
     },
     {
+      id: "recovery",
+      groupId: "account",
+      label: "Recovery phrase",
+      icon: <KeyRoundIcon />,
+      content: <RecoveryPhrasePanel />,
+    },
+    {
       id: "security",
       groupId: "account",
       label: "Security",
@@ -145,13 +157,6 @@ export function UserSettingsDialog({
           onRequestClose={() => onOpenChange(false)}
         />
       ),
-    },
-    {
-      id: "general",
-      groupId: "app",
-      label: "General",
-      icon: <InfoIcon />,
-      content: <DesktopUpdatePanel />,
     },
     {
       id: "appearance",
@@ -213,13 +218,6 @@ export function UserSettingsDialog({
       content: <PlaceholderPanel title="Advanced" />,
     },
     {
-      id: "help",
-      groupId: "app",
-      label: "Help",
-      icon: <HelpCircleIcon />,
-      content: <HelpPanel />,
-    },
-    {
       id: "logout",
       groupId: "session",
       label: "Log out",
@@ -237,7 +235,7 @@ export function UserSettingsDialog({
       description="Manage your account and app preferences"
       sections={sections}
       groups={groups}
-      defaultSectionId="account"
+      defaultSectionId={initialSectionId ?? "account"}
     />
   )
 }
@@ -602,7 +600,7 @@ function AppearancePanel() {
                 <FieldTitle>Intensity</FieldTitle>
                 <FieldDescription>
                   Adjusts how much of the native desktop material shows
-                  through the Hush chrome. The chrome always stays opaque
+                  through the app chrome. The chrome always stays opaque
                   enough to keep channel and menu text readable.
                 </FieldDescription>
               </FieldContent>
@@ -655,7 +653,33 @@ function SecurityPanel() {
     setVaultTimeout(readStoredVaultTimeout(userId))
   }, [userId])
 
+  // Rituals fork: an identity a space entry created has no PIN, so the
+  // only thing keeping it on this device is the `never` session key. Any
+  // other policy would lock it with nothing to unlock it again (no PIN to
+  // enter), so the choice is shown but locked to "Never" until a PIN
+  // exists. null = still checking.
+  const [hasPinVault, setHasPinVault] = React.useState<boolean | null>(null)
+  React.useEffect(() => {
+    if (!userId) {
+      setHasPinVault(null)
+      return
+    }
+    let cancelled = false
+    checkVaultExistsInIDB(userId)
+      .then((result: { exists: boolean }) => {
+        if (!cancelled) setHasPinVault(Boolean(result?.exists))
+      })
+      .catch(() => {
+        if (!cancelled) setHasPinVault(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
+  const timeoutLocked = hasPinVault !== true
+
   const handleChange = (next: string) => {
+    if (timeoutLocked) return
     const value = next as VaultTimeoutValue
     setVaultTimeout(value)
     if (typeof updateVaultTimeout === "function") {
@@ -689,7 +713,11 @@ function SecurityPanel() {
                 When the vault locks and requires re-entry.
               </span>
             </div>
-            <Select value={vaultTimeout} onValueChange={handleChange}>
+            <Select
+              value={vaultTimeout}
+              onValueChange={handleChange}
+              disabled={timeoutLocked}
+            >
               <SelectTrigger
                 aria-label="Vault timeout"
                 className="w-full sm:w-72"
@@ -707,6 +735,13 @@ function SecurityPanel() {
             <span className="text-xs text-muted-foreground">
               {describeVaultTimeoutPolicy(vaultTimeout, isDesktopRuntime)}
             </span>
+            {hasPinVault === false ? (
+              <span className="text-xs text-muted-foreground">
+                This device has no PIN, so it keeps you signed in to your
+                spaces. Save your recovery phrase so you can get back in if
+                this device&apos;s data is cleared.
+              </span>
+            ) : null}
             {vaultTimeout === "never" ? (
               <span className="text-xs text-destructive">
                 A non-extractable wrapping key stays on this device until
@@ -731,7 +766,7 @@ function describeVaultTimeoutPolicy(
   isDesktopRuntime: boolean
 ): string {
   const closeTarget = isDesktopRuntime
-    ? "closing Hush"
+    ? "closing the app"
     : "closing the last tab of this account"
   const refreshTarget = isDesktopRuntime ? "app reload" : "page refresh"
   switch (value) {

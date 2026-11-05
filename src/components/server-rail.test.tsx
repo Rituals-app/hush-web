@@ -1,7 +1,7 @@
 /**
  * Behaviour port from src/components/ServerList.test.jsx + GuildContextMenu.
- * Verifies that the rail's right-click menu surfaces Leave server for
- * non-owners and Delete server for owners, with separate confirm dialogs.
+ * Rituals fork: the rail's right-click menu no longer surfaces Leave or
+ * Delete server (Rituals owns a space's lifecycle); see the test below.
  */
 import { describe, it, expect, vi, afterEach, beforeAll } from "vitest"
 import { render, screen, cleanup } from "@testing-library/react"
@@ -64,45 +64,25 @@ describe("ServerRail", () => {
     })
   })
 
-  it("shows Leave server (not Delete) when current user is a non-owner member", async () => {
-    setup({ getServerRole: () => "member", onLeaveServer: vi.fn() })
-
-    await userEvent.pointer({
-      keys: "[MouseRight]",
-      target: screen.getByRole("button", { name: "Alpha" }),
-    })
-
-    expect(screen.getByText(/leave server/i)).toBeInTheDocument()
-    expect(screen.queryByText(/delete server/i)).not.toBeInTheDocument()
-  })
-
-  it("shows Delete server when current user is the owner", async () => {
-    setup({ getServerRole: () => "owner", onDeleteServer: vi.fn() })
-
-    await userEvent.pointer({
-      keys: "[MouseRight]",
-      target: screen.getByRole("button", { name: "Alpha" }),
-    })
-
-    expect(screen.getByText(/delete server/i)).toBeInTheDocument()
-    expect(screen.queryByText(/^leave server$/i)).not.toBeInTheDocument()
-  })
-
-  it("shows Delete on non-active owned servers (P1-1 contract)", async () => {
-    // Right-click a non-active server (srv-2) where the user is owner.
-    // Before the role-per-server fix, this surface wrongly fell back to
-    // "Open server first" because getServerRole returned undefined.
+  // Rituals fork: a space belongs to a shared task in Rituals, so the rail
+  // menu offers no Leave, Delete or Server settings for any role.
+  it("offers no Leave, Delete or Server settings, even to the owner", async () => {
     setup({
-      getServerRole: (target) => (target.id === "srv-2" ? "owner" : "member"),
+      getServerRole: () => "owner",
+      onLeaveServer: vi.fn(),
       onDeleteServer: vi.fn(),
+      onOpenServerSettings: vi.fn(),
     })
 
     await userEvent.pointer({
       keys: "[MouseRight]",
-      target: screen.getByRole("button", { name: "Beta" }),
+      target: screen.getByRole("button", { name: "Alpha" }),
     })
 
-    expect(screen.getByText(/delete server/i)).toBeInTheDocument()
+    expect(screen.getByText(/mute space/i)).toBeInTheDocument()
+    expect(screen.queryByText(/leave server/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/delete server/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/server settings/i)).not.toBeInTheDocument()
   })
 
   // Dialog-confirm flow tested via integration in App.test.jsx — Radix
@@ -123,25 +103,6 @@ describe("ServerRail", () => {
         { id: "srv-2", instanceUrl: HOME },
       ]),
     )
-  })
-
-  it("onOpenSettings receives the target object, not a bare id", async () => {
-    const onOpenServerSettings = vi.fn()
-    setup({
-      getServerRole: () => "owner",
-      onOpenServerSettings,
-    })
-
-    await userEvent.pointer({
-      keys: "[MouseRight]",
-      target: screen.getByRole("button", { name: "Alpha" }),
-    })
-    await userEvent.click(screen.getByText(/server settings/i))
-
-    expect(onOpenServerSettings).toHaveBeenCalledWith({
-      id: "srv-1",
-      instanceUrl: HOME,
-    })
   })
 
   it("distinguishes same-id servers across instances by passing the right instanceUrl", () => {

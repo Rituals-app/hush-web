@@ -1716,6 +1716,7 @@ export function useAuth() {
 
     let data = null;
     let alreadyRegistered = false;
+    let ticketAlreadyUsed = false;
     let lastError = null;
     for (const username of candidates) {
       try {
@@ -1739,6 +1740,7 @@ export function useAuth() {
         // whose response never arrived: sign in with the same key below.
         if ((status === 409 && /public key/i.test(message)) || /ticket_used/i.test(message)) {
           alreadyRegistered = true;
+          ticketAlreadyUsed = /ticket_used/i.test(message);
           break;
         }
         throw err;
@@ -1753,7 +1755,21 @@ export function useAuth() {
       identityKeyRef.current = { privateKey, publicKey };
       ({ user: u } = await finishAuth(data, baseUrl));
     } else {
-      ({ user: u } = await performChallengeResponse(privateKey, publicKey, baseUrl));
+      try {
+        ({ user: u } = await performChallengeResponse(privateKey, publicKey, baseUrl));
+      } catch (err) {
+        // `ticket_used` but this key is unknown to the server: the ticket
+        // created someone else's identity (another tab or device). Report
+        // the ticket as used rather than a sign-in failure; a network
+        // error stays a network error so Retry can try again.
+        if (ticketAlreadyUsed && !/could not reach|failed to fetch|load failed|networkerror/i.test(String(err?.message || ''))) {
+          const used = new Error('ticket_used');
+          used.status = 403;
+          used.cause = err;
+          throw used;
+        }
+        throw err;
+      }
     }
 
     // Keep the identity on this device without a PIN: `never` policy,
