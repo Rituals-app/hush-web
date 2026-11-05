@@ -856,10 +856,17 @@ export async function tagLocalPlaintext(db, messageId, channelId) {
 
 const TAG_SWEEP_PREFIX = 'rituals-tag-sweep:';
 
-/** How far a self-send's ack copy may trail its random-id row (user retries included). */
-const SELF_SEND_COPY_WINDOW_MS = 24 * 60 * 60 * 1000;
-/** Allowed client/server clock skew the other way (the ack copy carries the server time). */
-const SELF_SEND_COPY_SKEW_MS = 10 * 60 * 1000;
+/**
+ * How far apart a self-send's random-id row and its ack copy may be stored
+ * (ack lag plus client/server clock skew, either way).
+ */
+const SELF_SEND_PAIR_WINDOW_MS = 10 * 60 * 1000;
+/**
+ * Two untagged, sender-less rows with the same envelope this close together
+ * cannot be told apart (another Space's own send pair, a retry, or the same
+ * text sent twice), so none of them is paired.
+ */
+const SELF_SEND_CLUSTER_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
  * @param {string} plaintext
@@ -887,40 +894,68 @@ function canonicalPlaintext(plaintext) {
  * before the channel tag existed. Each send cached its plaintext under a
  * client `crypto.randomUUID()` and, at the server ack, again under the real
  * message id. Only the real id can be found in a Space's history, so the sweep
- * never reaches the random-id copy. An untagged row with no sender is given
- * the channel of a tagged row with the same envelope that was stored within
- * a day after it (a few minutes before, for clock skew), when every such
- * match is in one channel. Ambiguous rows are left alone. Only tags; never
- * deletes.
+ * never reaches the random-id copy.
+ *
+ * Pairing is scoped to one Space and one to one:
+ * - only a tagged row in `scopeChannelIds` (the Space being swept) can give
+ *   its channel; rows are never attributed to another Space's channel;
+ * - the untagged row must have no sender and no other untagged, sender-less
+ *   row with the same envelope within a day of it. An untagged twin nearby
+ *   may be another Space's own (not yet swept) send pair, a retry, or the
+ *   same text sent twice; with no stronger key, all of them are left alone;
+ * - every tagged row with that envelope stored within minutes of it (any
+ *   sender, any Space) must be in that one channel, else it is left alone.
+ * A row left untagged is never deleted by a removal (it survives, unread by
+ * any message view); a wrong tag could delete another Space's history.
+ * Only tags; never deletes.
  *
  * @param {IDBDatabase} db
+ * @param {readonly string[]} scopeChannelIds - channels of the Space being swept
  * @returns {Promise<number>} rows tagged
  */
-export async function tagSelfSendCopies(db) {
+export async function tagSelfSendCopies(db, scopeChannelIds) {
+  const scope = new Set(scopeChannelIds ?? []);
+  if (!scope.size) return 0;
   const rows = await getAll(db, 'localPlaintext');
   /** @type {Map<string, Array<{ channelId: string, timestamp: number }>>} */
   const taggedByText = new Map();
-  for (const row of rows) {
-    if (!row?.channelId || typeof row.plaintext !== 'string') continue;
-    const k = canonicalPlaintext(row.plaintext);
-    const list = taggedByText.get(k) ?? [];
-    list.push({ channelId: row.channelId, timestamp: row.timestamp ?? 0 });
-    taggedByText.set(k, list);
-  }
-  let tagged = 0;
+  /** @type {Map<string, Array<{ key: string, timestamp: number }>>} */
+  const untaggedByText = new Map();
   for (const row of rows) {
     const key = String(row?.key ?? '');
-    if (row?.channelId || row?.senderId || typeof row?.plaintext !== 'string') continue;
-    if (key.startsWith(TAG_SWEEP_PREFIX)) continue;
+    if (typeof row?.plaintext !== 'string' || key.startsWith(TAG_SWEEP_PREFIX)) continue;
+    const k = canonicalPlaintext(row.plaintext);
     const at = row.timestamp ?? 0;
-    const channels = new Set(
-      (taggedByText.get(canonicalPlaintext(row.plaintext)) ?? [])
-        .filter((c) => c.timestamp - at <= SELF_SEND_COPY_WINDOW_MS && at - c.timestamp <= SELF_SEND_COPY_SKEW_MS)
-        .map((c) => c.channelId),
-    );
-    if (channels.size !== 1) continue;
-    await tagLocalPlaintext(db, key, [...channels][0]);
-    tagged++;
+    if (row.channelId) {
+      const list = taggedByText.get(k) ?? [];
+      list.push({ channelId: row.channelId, timestamp: at });
+      taggedByText.set(k, list);
+    } else if (!row.senderId) {
+      const list = untaggedByText.get(k) ?? [];
+      list.push({ key, timestamp: at });
+      untaggedByText.set(k, list);
+    }
+  }
+  let tagged = 0;
+  for (const [k, candidates] of untaggedByText) {
+    const anchors = taggedByText.get(k);
+    if (!anchors) continue;
+    for (const u of candidates) {
+      const crowded = candidates.some(
+        (o) => o !== u && Math.abs(o.timestamp - u.timestamp) <= SELF_SEND_CLUSTER_WINDOW_MS,
+      );
+      if (crowded) continue;
+      const channels = new Set(
+        anchors
+          .filter((a) => Math.abs(a.timestamp - u.timestamp) <= SELF_SEND_PAIR_WINDOW_MS)
+          .map((a) => a.channelId),
+      );
+      if (channels.size !== 1) continue;
+      const [channelId] = channels;
+      if (!scope.has(channelId)) continue;
+      await tagLocalPlaintext(db, u.key, channelId);
+      tagged++;
+    }
   }
   return tagged;
 }
