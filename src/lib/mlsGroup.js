@@ -519,7 +519,7 @@ export async function joinAllChannelGroups(deps, channelIds) {
  * @returns {Promise<{ welcomeBytes: Uint8Array }>}
  */
 export async function addMemberToChannel(deps, channelId, keyPackageBytes) {
-  const { db, token, mlsStore, hushCrypto, api } = deps;
+  const { db, mlsStore, hushCrypto } = deps;
   const { sigPriv, sigPub, credBytes } = getCredFields(deps);
   const channelIdBytes = channelIdToBytes(channelId);
   const keyPackagesBytesJson = JSON.stringify([toBase64(keyPackageBytes)]);
@@ -823,7 +823,7 @@ export async function leaveAllChannelGroups(deps, channelIds) {
  * @returns {Promise<void>}
  */
 export async function performSelfUpdate(deps, channelId) {
-  const { db, token, mlsStore, hushCrypto, api } = deps;
+  const { db, mlsStore, hushCrypto } = deps;
   const { sigPriv, sigPub, credBytes } = getCredFields(deps);
   const channelIdBytes = channelIdToBytes(channelId);
 
