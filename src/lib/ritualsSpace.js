@@ -312,7 +312,7 @@ function base64UrlToBytes(value) {
  * registration.
  *
  * @param {string} ticket
- * @returns {{ dn?: string, un?: string, name?: string, role?: string, exp?: number, acct?: string, seated?: boolean }|null}
+ * @returns {{ dn?: string, un?: string, name?: string, role?: string, exp?: number, acct?: string }|null}
  */
 export function readSpaceTicketHints(ticket) {
   if (!isPlausibleSpaceTicket(ticket)) return null;
@@ -328,9 +328,6 @@ export function readSpaceTicketHints(ticket) {
       role: typeof parsed.role === 'string' ? parsed.role : undefined,
       exp: Number.isFinite(parsed.exp) ? parsed.exp : undefined,
       acct: typeof parsed.acct === 'string' && ACCOUNT_RE.test(parsed.acct) ? parsed.acct : undefined,
-      // Optional, feature-detected: this Rituals account already holds a seat
-      // in the space (another device has the identity). Absent → undefined.
-      seated: typeof parsed.seated === 'boolean' ? parsed.seated : undefined,
     };
   } catch {
     return null;
@@ -468,6 +465,69 @@ export async function claimRitualsSpace(token, ticket, baseUrl = '') {
     // Feature-detected: other people already hold seats here. Absent → undefined.
     ...(typeof body?.othersSeated === 'boolean' ? { othersSeated: body.othersSeated } : {}),
   };
+}
+
+// ── Peek (Rituals fork, 2026-11-05) ─────────────────────────────────────────
+
+const PEEK_TIMEOUT_MS = 6_000;
+const peekFlights = new Map();
+
+/**
+ * POST /api/rituals/spaces/peek {ticket} → {claimed, selfSeated, othersSeated}.
+ * hush-server verifies the ticket like claim does but without a session and
+ * without consuming it, so this runs before any identity exists here.
+ * `selfSeated`: this Rituals account already holds a seat in the space (an
+ * identity exists on another device). `othersSeated`: someone else does.
+ *
+ * Feature-detected and never throws: a missing endpoint (404), any other
+ * error status, a non-JSON body, a network error or a timeout all resolve
+ * to null, which callers treat as "behave as before" (register here).
+ * Concurrent calls for the same ticket share one request.
+ *
+ * @param {string} ticket
+ * @param {string} [baseUrl] - instance origin ('' = this page's origin)
+ * @param {{ timeoutMs?: number, fetchImpl?: typeof fetch }} [options]
+ * @returns {Promise<{ claimed: boolean, selfSeated: boolean, othersSeated: boolean }|null>}
+ */
+export function peekRitualsSpace(ticket, baseUrl = '', options = {}) {
+  if (!isPlausibleSpaceTicket(ticket)) return Promise.resolve(null);
+  const key = `${baseUrl || ''}|${ticket}`;
+  const existing = peekFlights.get(key);
+  if (existing) return existing;
+  const promise = runPeek(ticket, baseUrl, options).finally(() => {
+    if (peekFlights.get(key) === promise) peekFlights.delete(key);
+  });
+  peekFlights.set(key, promise);
+  return promise;
+}
+
+async function runPeek(ticket, baseUrl, { timeoutMs = PEEK_TIMEOUT_MS, fetchImpl } = {}) {
+  const doFetch = fetchImpl ?? globalThis.fetch;
+  if (typeof doFetch !== 'function') return null;
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const res = await doFetch(`${baseUrl || ''}/api/rituals/spaces/peek`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticket }),
+      credentials: 'omit',
+      cache: 'no-store',
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    if (!res || !res.ok) return null;
+    const body = await res.json();
+    if (!body || typeof body !== 'object') return null;
+    return {
+      claimed: body.claimed === true,
+      selfSeated: body.selfSeated === true,
+      othersSeated: body.othersSeated === true,
+    };
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**

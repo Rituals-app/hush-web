@@ -2,17 +2,21 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   RITUALS_SPACE_ORIGINS,
   consumeDeviceJustLinked,
-  hasEarlierMessagesElsewhere,
+  consumeLinkOffer,
+  earlierMessagesElsewhereBefore,
   isDeviceLinkAccountMismatch,
+  isRitualsSpaceOrigin,
   isSameLinkInstance,
+  isSpaceDeviceLink,
   joinLinkedDeviceChannels,
   markDeviceJustLinked,
   markEarlierMessagesElsewhere,
   readSpaceAccount,
+  rememberLinkOffer,
   shouldOfferDeviceLink,
   writeSpaceAccount,
 } from './ritualsSpaceLink.js';
-import { SPACE_ACCOUNT_KEY } from './ritualsSpace.js';
+import { SPACE_ACCOUNT_KEY, peekRitualsSpace } from './ritualsSpace.js';
 
 const ACCT_A = 'a'.repeat(64);
 const ACCT_B = 'b'.repeat(64);
@@ -59,39 +63,129 @@ describe('account marker', () => {
     expect(readSpaceAccount()).toBeNull();
   });
 
-  it('refuses a link only when both markers exist and differ', () => {
+  it('refuses a link when both markers exist and differ', () => {
     expect(isDeviceLinkAccountMismatch(ACCT_A, ACCT_B)).toBe(true);
     expect(isDeviceLinkAccountMismatch(ACCT_A, ACCT_A)).toBe(false);
     expect(isDeviceLinkAccountMismatch(null, ACCT_B)).toBe(false);
     expect(isDeviceLinkAccountMismatch(ACCT_A, null)).toBe(false);
   });
+
+  it('fails closed on an omitted acct when the bundle acct is required', () => {
+    expect(isDeviceLinkAccountMismatch(null, ACCT_B, { requireBundleAcct: true })).toBe(true);
+    expect(isDeviceLinkAccountMismatch(undefined, ACCT_B, { requireBundleAcct: true })).toBe(true);
+    expect(isDeviceLinkAccountMismatch(ACCT_B, ACCT_B, { requireBundleAcct: true })).toBe(false);
+    // A device with no marker yet is not bound to any account.
+    expect(isDeviceLinkAccountMismatch(null, null, { requireBundleAcct: true })).toBe(false);
+  });
+
+  it('is a Space link only on a Rituals origin with matching markers', () => {
+    expect(isSpaceDeviceLink({ bundleAcct: ACCT_A, localAcct: ACCT_A, onRitualsOrigin: true })).toBe(true);
+    expect(isSpaceDeviceLink({ bundleAcct: ACCT_A, localAcct: ACCT_A, onRitualsOrigin: false })).toBe(false);
+    expect(isSpaceDeviceLink({ bundleAcct: ACCT_A, localAcct: null, onRitualsOrigin: true })).toBe(false);
+    expect(isSpaceDeviceLink({ bundleAcct: null, localAcct: ACCT_A, onRitualsOrigin: true })).toBe(false);
+    expect(isSpaceDeviceLink({ bundleAcct: ACCT_A, localAcct: ACCT_B, onRitualsOrigin: true })).toBe(false);
+  });
+
+  it('recognises only the two Rituals Space origins', () => {
+    expect(isRitualsSpaceOrigin('https://space.rit.al')).toBe(true);
+    expect(isRitualsSpaceOrigin('https://space.rituals.app/')).toBe(true);
+    expect(isRitualsSpaceOrigin('https://space.rit.al.evil.example')).toBe(false);
+    expect(isRitualsSpaceOrigin('http://space.rit.al')).toBe(false);
+    expect(isRitualsSpaceOrigin(null)).toBe(false);
+  });
 });
 
 describe('shouldOfferDeviceLink', () => {
-  it('is feature-detected on the ticket hint seated === true', () => {
-    expect(shouldOfferDeviceLink({ hasIdentity: false, hints: { seated: true } })).toBe(true);
-    expect(shouldOfferDeviceLink({ hasIdentity: false, hints: { seated: false } })).toBe(false);
-    expect(shouldOfferDeviceLink({ hasIdentity: false, hints: {} })).toBe(false);
-    expect(shouldOfferDeviceLink({ hasIdentity: false, hints: null })).toBe(false);
-    expect(shouldOfferDeviceLink({ hasIdentity: true, hints: { seated: true } })).toBe(false);
+  it('keys only on the peek selfSeated === true', () => {
+    expect(shouldOfferDeviceLink({ hasIdentity: false, peek: { selfSeated: true, othersSeated: false } })).toBe(true);
+    expect(shouldOfferDeviceLink({ hasIdentity: false, peek: { selfSeated: false, othersSeated: true } })).toBe(false);
+    expect(shouldOfferDeviceLink({ hasIdentity: false, peek: null })).toBe(false);
+    expect(shouldOfferDeviceLink({ hasIdentity: false, peek: undefined })).toBe(false);
+    expect(shouldOfferDeviceLink({ hasIdentity: true, peek: { selfSeated: true } })).toBe(false);
+  });
+});
+
+const TICKET = `rt1.${'A'.repeat(40)}.${'B'.repeat(43)}`;
+
+function jsonResponse(status, body) {
+  return { ok: status >= 200 && status < 300, status, json: async () => body };
+}
+
+describe('peekRitualsSpace + offer gate', () => {
+  it('selfSeated: offers to add this device', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { claimed: true, selfSeated: true, othersSeated: true }));
+    const peek = await peekRitualsSpace(TICKET, 'https://space.rit.al', { fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe('https://space.rit.al/api/rituals/spaces/peek');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({ ticket: TICKET });
+    expect(init.headers.Authorization).toBeUndefined();
+    expect(peek).toEqual({ claimed: true, selfSeated: true, othersSeated: true });
+    expect(shouldOfferDeviceLink({ hasIdentity: false, peek })).toBe(true);
+  });
+
+  it('not seated: registers as before', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { claimed: false, selfSeated: false, othersSeated: false }));
+    const peek = await peekRitualsSpace(TICKET, '', { fetchImpl });
+    expect(peek).toEqual({ claimed: false, selfSeated: false, othersSeated: false });
+    expect(shouldOfferDeviceLink({ hasIdentity: false, peek })).toBe(false);
+  });
+
+  it('endpoint missing (404), non-JSON, network error or timeout: null, registers as before', async () => {
+    const missing = await peekRitualsSpace(TICKET, '', { fetchImpl: async () => jsonResponse(404, { error: 'not_found' }) });
+    expect(missing).toBeNull();
+    const nonJson = await peekRitualsSpace(TICKET, '', {
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('bad'); } }),
+    });
+    expect(nonJson).toBeNull();
+    const offline = await peekRitualsSpace(TICKET, '', { fetchImpl: async () => { throw new TypeError('offline'); } });
+    expect(offline).toBeNull();
+    const slow = await peekRitualsSpace(TICKET, '', {
+      timeoutMs: 5,
+      fetchImpl: (_url, init) => new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      }),
+    });
+    expect(slow).toBeNull();
+    for (const peek of [missing, nonJson, offline, slow]) {
+      expect(shouldOfferDeviceLink({ hasIdentity: false, peek })).toBe(false);
+    }
+  });
+
+  it('does not call the server for an implausible ticket', async () => {
+    const fetchImpl = vi.fn();
+    expect(await peekRitualsSpace('nope', '', { fetchImpl })).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 
 describe('link markers', () => {
-  it('just-linked is consumed once', () => {
-    expect(consumeDeviceJustLinked()).toBe(false);
-    markDeviceJustLinked();
-    expect(consumeDeviceJustLinked()).toBe(true);
-    expect(consumeDeviceJustLinked()).toBe(false);
+  it('just-linked is consumed once and carries the link time', () => {
+    expect(consumeDeviceJustLinked()).toBeNull();
+    markDeviceJustLinked(1_700_000_000_000);
+    expect(consumeDeviceJustLinked()).toBe(1_700_000_000_000);
+    expect(consumeDeviceJustLinked()).toBeNull();
   });
 
-  it('earlier-elsewhere is per space', () => {
-    expect(hasEarlierMessagesElsewhere('s1')).toBe(false);
-    markEarlierMessagesElsewhere('s1');
-    markEarlierMessagesElsewhere('s1');
-    expect(hasEarlierMessagesElsewhere('s1')).toBe(true);
-    expect(hasEarlierMessagesElsewhere('s2')).toBe(false);
-    expect(JSON.parse(window.localStorage.getItem('rituals_space_earlier_elsewhere'))).toEqual(['s1']);
+  it('the link offer is consumed once', () => {
+    expect(consumeLinkOffer()).toBeNull();
+    rememberLinkOffer({ othersSeated: true });
+    expect(consumeLinkOffer()).toEqual({ othersSeated: true });
+    expect(consumeLinkOffer()).toBeNull();
+    rememberLinkOffer({ othersSeated: false });
+    expect(consumeLinkOffer()).toEqual({ othersSeated: false });
+  });
+
+  it('earlier-elsewhere is per space and bounded by the link time', () => {
+    expect(earlierMessagesElsewhereBefore('s1')).toBeNull();
+    markEarlierMessagesElsewhere('s1', 1000);
+    markEarlierMessagesElsewhere('s1', 2000);
+    expect(earlierMessagesElsewhereBefore('s1')).toBe(2000);
+    expect(earlierMessagesElsewhereBefore('s2')).toBeNull();
+    markEarlierMessagesElsewhere('s3');
+    expect(earlierMessagesElsewhereBefore('s3')).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem('rituals_space_earlier_elsewhere'))).toEqual([{ id: 's1', at: 2000 }]);
   });
 });
 

@@ -854,7 +854,56 @@ describe('useAuth - completeDeviceLink', () => {
     expect(localStorage.getItem('rituals_space_account')).toBe('b'.repeat(64));
   });
 
+  it('refuses a bundle that omits acct on a Rituals origin when this device has an account', async () => {
+    localStorage.setItem('rituals_space_account', 'a'.repeat(64));
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const bundle = {
+      rootPrivateKey: new Uint8Array(32).fill(1),
+      rootPublicKey: new Uint8Array(32).fill(2),
+      historySnapshot: null,
+      instanceUrl: 'https://space.rit.al',
+    };
+
+    await act(async () => {
+      try {
+        await result.current.completeDeviceLink(bundle, 'https://space.rit.al');
+      } catch {
+        // fail-closed rethrow
+      }
+    });
+
+    expect(result.current.token).toBeNull();
+    expect(String(result.current.error?.message ?? result.current.error)).toMatch(/other device/i);
+    expect(sessionStorage.getItem('hush_jwt_space.rit.al')).toBeNull();
+    expect(localStorage.getItem('rituals_space_just_linked')).toBeNull();
+  });
+
+  it('keeps the PIN policy and takes no marker when this device has no account yet', async () => {
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const bundle = {
+      rootPrivateKey: new Uint8Array(32).fill(1),
+      rootPublicKey: new Uint8Array(32).fill(2),
+      historySnapshot: null,
+      instanceUrl: 'https://space.rit.al',
+      acct: 'a'.repeat(64),
+    };
+
+    await act(async () => {
+      await result.current.completeDeviceLink(bundle, 'https://space.rit.al');
+    });
+
+    expect(result.current.token).toBe('jwt-test');
+    expect(localStorage.getItem('rituals_space_account')).toBeNull();
+    expect(localStorage.getItem('rituals_space_just_linked')).toBeNull();
+    expect(result.current.needsPinSetup).toBe(true);
+  });
+
   it('stores the account marker and keeps the no-PIN policy for a Space link', async () => {
+    localStorage.setItem('rituals_space_account', 'a'.repeat(64));
     const { result } = renderHook(() => useAuth(), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -872,7 +921,7 @@ describe('useAuth - completeDeviceLink', () => {
 
     expect(result.current.token).toBe('jwt-test');
     expect(localStorage.getItem('rituals_space_account')).toBe('a'.repeat(64));
-    expect(localStorage.getItem('rituals_space_just_linked')).toBe('1');
+    expect(Number(localStorage.getItem('rituals_space_just_linked'))).toBeGreaterThan(0);
     expect(result.current.needsPinSetup).toBe(false);
   });
 });

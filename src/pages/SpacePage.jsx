@@ -46,13 +46,16 @@ import {
   readSpaceTicket,
   readSpaceTicketHints,
   spaceDisplayName,
+  peekRitualsSpace,
   spaceUsernameCandidates,
   subscribeSpaceTicket,
 } from '../lib/ritualsSpace';
 import {
   consumeDeviceJustLinked,
+  consumeLinkOffer,
   joinLinkedDeviceChannels,
   markEarlierMessagesElsewhere,
+  rememberLinkOffer,
   shouldOfferDeviceLink,
 } from '../lib/ritualsSpaceLink';
 
@@ -266,6 +269,7 @@ export default function SpacePage() {
   const [retrying, setRetrying] = useState(false);
   const [claim, setClaim] = useState(null);
   const [linkDeclined, setLinkDeclined] = useState(false);
+  const [peekState, setPeekState] = useState({ ticket: null, result: null });
 
   const authRef = useRef(auth);
   authRef.current = auth;
@@ -301,11 +305,24 @@ export default function SpacePage() {
 
   // ── 1. No identity on this device: create one, no input ────────────────
   const needsIdentity = bootState === 'needs_login' && !auth.hasVault;
-  // Feature-detected (ticket hint `seated`): absent → provision as before.
-  const offerLink = needsIdentity && !linkDeclined
-    && shouldOfferDeviceLink({ hasIdentity: auth.hasVault, hints });
+  // Rituals fork: before creating an identity, ask hush-server (peek, ticket
+  // verified, no session) whether this account is already seated from
+  // another device. Never throws; null (404, error, timeout) → provision as
+  // before. Provisioning waits until the peek for this ticket has settled.
+  const peekSettled = Boolean(ticket) && peekState.ticket === ticket;
   useEffect(() => {
-    if (!ticket || errorKind || !needsIdentity || offerLink) return undefined;
+    if (!ticket || errorKind || !needsIdentity || peekState.ticket === ticket) return undefined;
+    let cancelled = false;
+    peekRitualsSpace(ticket, spaceInstanceUrl()).then((result) => {
+      if (!cancelled) setPeekState({ ticket, result });
+    });
+    return () => { cancelled = true; };
+  }, [ticket, errorKind, needsIdentity, peekState.ticket]);
+  const peek = peekSettled ? peekState.result : null;
+  const offerLink = needsIdentity && !linkDeclined && peekSettled
+    && shouldOfferDeviceLink({ hasIdentity: auth.hasVault, peek });
+  useEffect(() => {
+    if (!ticket || errorKind || !needsIdentity || !peekSettled || offerLink) return undefined;
     let cancelled = false;
     const usernames = spaceUsernameCandidates(hints);
     const displayName = spaceDisplayName(hints, usernames[0]);
@@ -322,7 +339,7 @@ export default function SpacePage() {
       fail(classifySpaceError(err));
     });
     return () => { cancelled = true; };
-  }, [ticket, errorKind, needsIdentity, offerLink, hints, attempt, fail]);
+  }, [ticket, errorKind, needsIdentity, peekSettled, offerLink, hints, attempt, fail]);
 
   // ── 2. Signed in: claim the seat (idempotent) ──────────────────────────
   const signedIn = bootState === 'ready' || bootState === 'booted';
@@ -377,8 +394,12 @@ export default function SpacePage() {
       // Rituals fork: right after a device link, join the MLS group of every
       // channel in the spaces this identity is seated in (background, per
       // channel mutex; channels already joined are skipped).
-      if (consumeDeviceJustLinked()) {
-        if (claim.othersSeated === true) markEarlierMessagesElsewhere(claim.serverId);
+      const linkedAt = consumeDeviceJustLinked();
+      const offer = consumeLinkOffer();
+      if (linkedAt != null) {
+        if (claim.othersSeated === true || offer?.othersSeated === true) {
+          markEarlierMessagesElsewhere(claim.serverId, linkedAt);
+        }
         const current = authRef.current;
         const serverIds = mergedGuildsRef.current
           .filter((g) => !g.instanceUrl || normalizeInstanceUrl(g.instanceUrl) === normalizeInstanceUrl(instanceUrl))
@@ -441,7 +462,10 @@ export default function SpacePage() {
   if (offerLink) {
     return (
       <LinkOfferScreen
-        onLink={() => navigate('/link-device?mode=new')}
+        onLink={() => {
+          rememberLinkOffer({ othersSeated: peek?.othersSeated === true });
+          navigate('/link-device?mode=new');
+        }}
         onFresh={() => setLinkDeclined(true)}
       />
     );

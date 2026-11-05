@@ -30,7 +30,9 @@ import { setRecoveryPhraseUnsaved } from '../lib/ritualsSpace';
 import {
   currentDeviceSpaceAccount,
   isDeviceLinkAccountMismatch,
+  isRitualsSpaceOrigin,
   isSameLinkInstance,
+  isSpaceDeviceLink,
   markDeviceJustLinked,
   writeSpaceAccount,
 } from '../lib/ritualsSpaceLink';
@@ -1931,8 +1933,19 @@ export function useAuth() {
       }
       // Rituals fork: one Space identity per Rituals account. Refuse a
       // bundle from a different account than this device's ticket named.
+      // On a Rituals Space origin the binding fails closed: a device that
+      // already belongs to an account refuses a bundle without `acct`.
       const localSpaceAccount = currentDeviceSpaceAccount();
-      if (isDeviceLinkAccountMismatch(bundle.acct, localSpaceAccount)) {
+      const onRitualsSpaceOrigin = isRitualsSpaceOrigin(expectedAuthBaseUrl)
+        || isRitualsSpaceOrigin(typeof window !== 'undefined' ? window.location?.origin : null);
+      if (localSpaceAccount && onRitualsSpaceOrigin && !bundle.acct) {
+        throw new Error(
+          'Open the space from Rituals on your other device, then add this device again.',
+        );
+      }
+      if (isDeviceLinkAccountMismatch(bundle.acct, localSpaceAccount, {
+        requireBundleAcct: onRitualsSpaceOrigin,
+      })) {
         throw new Error(
           'This device belongs to another Rituals account. Open the space from Rituals on this device first.',
         );
@@ -2054,17 +2067,23 @@ export function useAuth() {
       await markAuthInstanceUsed(authBaseUrl);
       publishAuthenticatedSession(authResult.token, authResult.user, authBaseUrl);
       localStorage.setItem(`${VAULT_USER_KEY_PREFIX}${authResult.user.id}`, bytesToHex(bundle.rootPublicKey));
-      // Rituals fork: a Space identity (the bundle names its Rituals account)
-      // keeps the no-PIN policy it was created with; mark the account and the
-      // fresh link so /space joins every seated channel's MLS group.
-      const spaceLink = Boolean(bundle.acct);
+      // Rituals fork: a Space link (Rituals Space origin, this device's own
+      // account marker, and a bundle naming that same account) keeps the
+      // no-PIN policy Space identities are created with, and marks the fresh
+      // link so /space joins every seated channel's MLS group. Anything else
+      // keeps the upstream PIN setup and never takes the approver's marker.
+      const spaceLink = isSpaceDeviceLink({
+        bundleAcct: bundle.acct,
+        localAcct: localSpaceAccount,
+        onRitualsOrigin: onRitualsSpaceOrigin,
+      });
       if (spaceLink) {
-        writeSpaceAccount(bundle.acct);
+        writeSpaceAccount(localSpaceAccount);
         setVaultConfig(authResult.user.id, { timeout: 'never', pinType: 'pin' });
         localStorage.removeItem(LEGACY_VAULT_TIMEOUT_KEY);
         localStorage.setItem(`${VAULT_USER_KEY_PREFIX}_last_user`, authResult.user.id);
+        markDeviceJustLinked();
       }
-      markDeviceJustLinked();
       setHasLocalVault(true);
       setVaultState('unlocked');
       applyVaultTimeout(authResult.user.id);

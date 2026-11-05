@@ -27,13 +27,20 @@ export const RITUALS_SPACE_ORIGINS = Object.freeze([
   'https://space.rituals.app',
 ]);
 
-/** Set on a device right after a successful link; consumed by /space. */
+/** Set on a device right after a successful Space link; consumed by /space. */
 const JUST_LINKED_KEY = 'rituals_space_just_linked';
+/** Set when the person taps "Add this device"; read once after the link. */
+const LINK_OFFER_KEY = 'rituals_space_link_offer';
 /** Spaces where a linked device should say earlier messages are elsewhere. */
 const EARLIER_ELSEWHERE_KEY = 'rituals_space_earlier_elsewhere';
 
-function isRitualsSpaceOrigin(origin) {
-  return RITUALS_SPACE_ORIGINS.includes(origin);
+/**
+ * @param {string|null|undefined} origin
+ * @returns {boolean} whether `origin` is one of the two Rituals Space origins
+ */
+export function isRitualsSpaceOrigin(origin) {
+  const normalized = normalizeInstanceUrl(origin);
+  return Boolean(normalized) && RITUALS_SPACE_ORIGINS.includes(normalized);
 }
 
 /**
@@ -91,33 +98,50 @@ export function writeSpaceAccount(acct) {
 }
 
 /**
- * A link is refused when the bundle names a Rituals account and this device
- * already belongs to a different one. A bundle without `acct` (older
- * approving device, or a plain Hush identity) and a device with no marker
- * yet are both allowed; on success the bundle's marker is stored.
+ * A link is refused when this device already belongs to a Rituals account
+ * and the bundle names a different one. With `requireBundleAcct` (the device
+ * is on a Rituals Space origin) a bundle that omits `acct` is refused too, so
+ * an approver cannot get past the binding by leaving the field out. A device
+ * with no marker yet is allowed; it is then not treated as a Space link.
  *
  * @param {string|null|undefined} bundleAcct
  * @param {string|null|undefined} localAcct
+ * @param {{ requireBundleAcct?: boolean }} [options]
  * @returns {boolean}
  */
-export function isDeviceLinkAccountMismatch(bundleAcct, localAcct) {
-  if (!bundleAcct || !localAcct) return false;
+export function isDeviceLinkAccountMismatch(bundleAcct, localAcct, { requireBundleAcct = false } = {}) {
+  if (!localAcct) return false;
+  if (!bundleAcct) return requireBundleAcct;
   return bundleAcct !== localAcct;
 }
 
 /**
- * Whether /space should offer "Add this device" before creating a fresh
- * identity. Feature-detected: only a ticket hint `seated === true` (this
- * Rituals account already holds a seat in the space, so another device has
- * the identity) turns it on; anything else keeps today's silent
- * registration.
+ * Whether a completed link is a Space link (marker kept, never-PIN vault,
+ * post-link channel join): only on a Rituals Space origin, only when this
+ * device already belongs to a Rituals account, and only when the bundle
+ * names that same account. Anything else follows the upstream PIN policy.
  *
- * @param {{ hasIdentity: boolean, hints: { seated?: boolean }|null }} input
+ * @param {{ bundleAcct?: string|null, localAcct?: string|null, onRitualsOrigin: boolean }} input
  * @returns {boolean}
  */
-export function shouldOfferDeviceLink({ hasIdentity, hints }) {
+export function isSpaceDeviceLink({ bundleAcct, localAcct, onRitualsOrigin }) {
+  return Boolean(onRitualsOrigin && localAcct && bundleAcct && bundleAcct === localAcct);
+}
+
+/**
+ * Whether /space should offer "Add this device" before creating a fresh
+ * identity. Keyed on the server's ticket-verified peek
+ * (`peekRitualsSpace`): only `selfSeated === true` (this Rituals account
+ * already holds a seat in the space, so another device has the identity)
+ * turns it on. A null peek (endpoint missing, error, timeout) keeps today's
+ * silent registration. Unsigned ticket payload fields are never used here.
+ *
+ * @param {{ hasIdentity: boolean, peek: { selfSeated?: boolean }|null|undefined }} input
+ * @returns {boolean}
+ */
+export function shouldOfferDeviceLink({ hasIdentity, peek }) {
   if (hasIdentity) return false;
-  return hints?.seated === true;
+  return peek?.selfSeated === true;
 }
 
 function readFlag(key) {
@@ -137,39 +161,71 @@ function writeFlag(key, value) {
   }
 }
 
-/** Called by completeDeviceLink on success. */
-export function markDeviceJustLinked() {
-  writeFlag(JUST_LINKED_KEY, '1');
+/** Called by completeDeviceLink after a successful Space link only. */
+export function markDeviceJustLinked(now = Date.now()) {
+  writeFlag(JUST_LINKED_KEY, String(now));
 }
 
-/** True once after a link; clears the flag. */
+/**
+ * Once after a Space link: the link time in ms, then the flag is cleared.
+ * @returns {number|null}
+ */
 export function consumeDeviceJustLinked() {
-  const linked = readFlag(JUST_LINKED_KEY) === '1';
-  if (linked) writeFlag(JUST_LINKED_KEY, null);
-  return linked;
+  const raw = readFlag(JUST_LINKED_KEY);
+  if (raw == null) return null;
+  writeFlag(JUST_LINKED_KEY, null);
+  const at = Number(raw);
+  return Number.isFinite(at) && at > 0 ? at : null;
+}
+
+/** Called when the person taps "Add this device" on the offer screen. */
+export function rememberLinkOffer({ othersSeated }) {
+  writeFlag(LINK_OFFER_KEY, othersSeated === true ? '1' : '0');
+}
+
+/**
+ * Once: what the peek said about other people when the offer was taken.
+ * @returns {{ othersSeated: boolean }|null}
+ */
+export function consumeLinkOffer() {
+  const raw = readFlag(LINK_OFFER_KEY);
+  if (raw == null) return null;
+  writeFlag(LINK_OFFER_KEY, null);
+  return { othersSeated: raw === '1' };
 }
 
 function readEarlierElsewhere() {
   try {
     const parsed = JSON.parse(readFlag(EARLIER_ELSEWHERE_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((e) => e && typeof e.id === 'string' && Number.isFinite(e.at))
+      : [];
   } catch {
     return [];
   }
 }
 
-/** Records that this linked device joined `serverId` after others were seated. */
-export function markEarlierMessagesElsewhere(serverId) {
-  if (typeof serverId !== 'string' || !serverId) return;
-  const ids = readEarlierElsewhere();
-  if (ids.includes(serverId)) return;
-  ids.push(serverId);
-  writeFlag(EARLIER_ELSEWHERE_KEY, JSON.stringify(ids.slice(-200)));
+/**
+ * Records that this device was linked into `serverId` at `linkedAt` while
+ * other people already held seats there.
+ */
+export function markEarlierMessagesElsewhere(serverId, linkedAt) {
+  if (typeof serverId !== 'string' || !serverId || !Number.isFinite(linkedAt)) return;
+  const entries = readEarlierElsewhere().filter((e) => e.id !== serverId);
+  entries.push({ id: serverId, at: linkedAt });
+  writeFlag(EARLIER_ELSEWHERE_KEY, JSON.stringify(entries.slice(-200)));
 }
 
-/** @returns {boolean} whether to say "Earlier messages are on your other device" */
-export function hasEarlierMessagesElsewhere(serverId) {
-  return typeof serverId === 'string' && readEarlierElsewhere().includes(serverId);
+/**
+ * The link time for `serverId` when a message sent before it should read
+ * "Earlier messages are on your other device"; null otherwise. Messages
+ * after this time that fail to decrypt keep the ordinary recovery copy.
+ *
+ * @returns {number|null}
+ */
+export function earlierMessagesElsewhereBefore(serverId) {
+  if (typeof serverId !== 'string' || !serverId) return null;
+  return readEarlierElsewhere().find((e) => e.id === serverId)?.at ?? null;
 }
 
 /**
