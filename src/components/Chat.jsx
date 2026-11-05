@@ -698,7 +698,7 @@ export default function Chat({
                     <div className="chat-body">
                       {msg.decryptionFailed ? (
                         <span className="chat-decryption-failed">
-                          Message encrypted - decryption key no longer available
+                          Sent before this device joined the space. End-to-end encryption keeps it private.
                         </span>
                       ) : (
                         msg.content

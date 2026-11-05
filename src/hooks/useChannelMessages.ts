@@ -451,11 +451,21 @@ export function useChannelMessages(
     channelId: channelId ?? undefined,
     baseUrl,
   }) as {
+    ensureChannelGroup?: () => Promise<void>
     encryptForChannel: (plaintext: string) => Promise<{ ciphertext: Uint8Array }>
     decryptFromChannel: (bytes: Uint8Array) => Promise<string>
     getCachedMessage?: (id: string) => Promise<CachedMessage | null>
     setCachedMessage?: (id: string, payload: CachedMessage) => Promise<void> | void
   }
+
+  // Rituals fork: join this channel's MLS group when it opens (useMLS
+  // ensureChannelGroup), so everyone present can read the first message.
+  const ensureChannelGroupRef = React.useRef(mls.ensureChannelGroup)
+  ensureChannelGroupRef.current = mls.ensureChannelGroup
+  React.useEffect(() => {
+    if (!channelId || !serverId || !currentUserId) return
+    void ensureChannelGroupRef.current?.()
+  }, [channelId, serverId, currentUserId])
 
   const decryptDepsRef = React.useRef<DecryptDeps>({
     decryptFromChannel: mls.decryptFromChannel,

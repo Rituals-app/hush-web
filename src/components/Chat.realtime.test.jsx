@@ -120,7 +120,7 @@ describe('Chat realtime cross-device behavior', () => {
     });
 
     expect(
-      await screen.findByText('Message encrypted - decryption key no longer available'),
+      await screen.findByText('Sent before this device joined the space. End-to-end encryption keeps it private.'),
     ).toBeInTheDocument();
     expect(screen.queryByText(malformedEnvelope)).not.toBeInTheDocument();
   });

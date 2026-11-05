@@ -58,7 +58,7 @@ import {
 import type { AttachmentRef, GifRef, MessageEnvelopeV1 } from "@/lib/messageEnvelope"
 
 const RECOVERY_PLACEHOLDER =
-  "Message encrypted - decryption key no longer available"
+  "Sent before this device joined the space. End-to-end encryption keeps it private."
 
 interface ServerMember {
   id: string

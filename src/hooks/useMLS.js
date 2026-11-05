@@ -191,7 +191,34 @@ export function useMLS({ getStore, getHistoryStore, getToken, channelId, baseUrl
     }
   }
 
+  /**
+   * Rituals fork (2026-11-05): join (or, as the first member, create) this
+   * channel's MLS group as soon as the channel is open, instead of only on the
+   * first encrypt or decrypt. Without it, the first message in a new space is
+   * encrypted before anyone else present has joined, so none of them can read
+   * it. Best effort: errors are swallowed and the lazy path stays as fallback.
+   * @returns {Promise<void>}
+   */
+  async function ensureChannelGroup() {
+    if (!channelId) return;
+    try {
+      const deps = await buildDeps();
+      if (!deps.credential) return;
+      await withChannelMLSMutex(textChannelKey(channelId), async () => {
+        const epoch = await mlsStore.getGroupEpoch(deps.db, channelId);
+        if (epoch == null) await mlsGroup.joinOrCreateChannelGroup(deps, channelId);
+        else await mlsGroup.catchupCommits(deps, channelId);
+      });
+    } catch (err) {
+      console.warn('[useMLS] ensureChannelGroup failed; joining lazily on the first message instead', {
+        channelId,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   return {
+    ensureChannelGroup,
     encryptForChannel,
     decryptFromChannel,
     getCachedMessage,
