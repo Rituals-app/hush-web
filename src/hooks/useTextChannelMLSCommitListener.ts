@@ -230,10 +230,16 @@ export function useTextChannelMLSCommitListener({
         const memberIdentity = `${requesterId}:${requesterDeviceId}`
         await withChannelMLSMutex(textChannelKey(channelId), async () => {
           try {
+            // Rituals fork (LANE-EF-WIRE D13): spread concurrent removers
+            // and tell the server which pending removal this commit clears.
             await mlsGroup.removeMemberFromChannel(
               deps,
               channelId,
               memberIdentity,
+              {
+                removes: [{ userId: requesterId, deviceId: requesterDeviceId }],
+                jitterMs: 1000,
+              },
             )
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err)

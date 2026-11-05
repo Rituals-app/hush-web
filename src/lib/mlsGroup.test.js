@@ -441,6 +441,17 @@ describe('removeMemberFromChannel', () => {
     expect(deps.api.postMLSCommit.mock.invocationCallOrder[0]).toBeLessThan(mergeOrder);
   });
 
+  it('waits a random 0..jitterMs before catching up when asked', async () => {
+    deps.sleep = vi.fn().mockResolvedValue(undefined);
+    await removeMemberFromChannel(deps, 'ch-4', 'm', { jitterMs: 1000 });
+    const waited = deps.sleep.mock.calls[0][0];
+    expect(waited).toBeGreaterThanOrEqual(0);
+    expect(waited).toBeLessThanOrEqual(1000);
+    expect(deps.sleep.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.api.getMLSCommitsSinceEpoch.mock.invocationCallOrder[0],
+    );
+  });
+
   it('catches up before removing', async () => {
     await removeMemberFromChannel(deps, 'ch-4', 'm');
     expect(deps.api.getMLSCommitsSinceEpoch.mock.invocationCallOrder[0]).toBeLessThan(

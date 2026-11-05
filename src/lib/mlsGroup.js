@@ -545,7 +545,7 @@ export async function addMemberToChannel(deps, channelId, keyPackageBytes) {
  * @param {MlsDeps} deps
  * @param {string} channelId
  * @param {string} memberIdentity - Identity string of the member to remove
- * @param {{ removes?: Array<{ userId: string, deviceId: string }> }} [opts] - pending-removal hint for the server
+ * @param {{ removes?: Array<{ userId: string, deviceId: string }>, jitterMs?: number }} [opts] - pending-removal hint for the server; optional random wait before catch-up so concurrent removers spread out
  * @returns {Promise<{ removed: boolean }>}
  */
 export async function removeMemberFromChannel(deps, channelId, memberIdentity, opts = {}) {
@@ -556,6 +556,7 @@ export async function removeMemberFromChannel(deps, channelId, memberIdentity, o
 
   // Rituals fork (LANE-EF-WIRE D12/D13): catch up first so an absent member is
   // really absent; one compare-and-set winner per epoch, losers retry.
+  if (opts.jitterMs) await backoff(deps, 0, opts.jitterMs);
   await catchupOrRejoin(deps, channelId);
   for (let attempt = 1; ; attempt++) {
     await mlsStore.preloadGroupState(db);
@@ -564,7 +565,7 @@ export async function removeMemberFromChannel(deps, channelId, memberIdentity, o
       result = await hushCrypto.removeMembers(channelIdBytes, sigPriv, sigPub, credBytes, memberIdentitiesJson);
     } catch (err) {
       if (ABSENT_MEMBER_RE.test(errorText(err))) {
-        console.debug('[mlsGroup] remove: member already absent', { channelId });
+        console.info('[mlsGroup] remove: member absent after catch-up', { channelId, reason: errorText(err) });
         return { removed: false };
       }
       throw err;

@@ -72,7 +72,7 @@ describe("useTextChannelMLSCommitListener", () => {
   beforeEach(() => {
     processCommit.mockReset().mockResolvedValue(undefined)
     catchupCommits.mockReset().mockResolvedValue(undefined)
-    removeMemberFromChannel.mockReset().mockResolvedValue(undefined)
+    removeMemberFromChannel.mockReset().mockResolvedValue({ removed: true })
   })
 
   afterEach(() => {
@@ -281,6 +281,10 @@ describe("useTextChannelMLSCommitListener", () => {
     expect(removeMemberFromChannel.mock.calls[0][2]).toBe(
       "user-leaver:device-leaver",
     )
+    expect(removeMemberFromChannel.mock.calls[0][3]).toEqual({
+      removes: [{ userId: "user-leaver", deviceId: "device-leaver" }],
+      jitterMs: 1000,
+    })
   })
 
   it("processes a remove for the same user on a different device", async () => {
