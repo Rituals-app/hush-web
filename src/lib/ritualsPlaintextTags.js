@@ -8,10 +8,13 @@
  * this sweep pages through each of the Space's channels once and tags every
  * untagged message it finds there. It only tags; it never deletes, so nobody's
  * history changes. A channel is marked swept once its history is read to the
- * end, and the sweep does no network work when nothing is untagged. Self-send
- * rows cached under a random client id are tagged with their real-id copy's
- * channel, only within this Space and only when the pairing is unambiguous
- * (mlsStore.tagSelfSendCopies).
+ * end, and the sweep does no network work when nothing is untagged.
+ *
+ * The only key is the exact server message id: a row is tagged with a channel
+ * only when that channel's history returns its id. Nothing is matched by
+ * content or time. Rows the history never names (random-id self-send copies
+ * from older builds, rows past maxPages, channels this person has left) stay
+ * untagged, and a removal never deletes an untagged row.
  */
 
 import * as mlsStore from './mlsStore';
@@ -43,14 +46,12 @@ export async function sweepLegacyPlaintextTags({
   transcriptRows = listTranscriptCacheEntries,
   maxPages = 40,
 }) {
-  // Random-id self-send copies whose real-id copy (in this Space) is already tagged.
-  let tagged = await mlsStore.tagSelfSendCopies(db, channelIds);
+  let tagged = 0;
   const state = await mlsStore.getLocalPlaintextTagState(db);
   const pending = new Set(state.untagged);
   for (const row of transcriptRows()) {
     if (row?.messageId && !row.channelId && !state.tagged.has(row.messageId)) pending.add(row.messageId);
   }
-  const fromHistory = tagged;
   for (const channelId of channelIds) {
     if (!pending.size) break;
     if (state.swept.has(channelId)) continue;
@@ -92,7 +93,5 @@ export async function sweepLegacyPlaintextTags({
     }
     if (complete) await mlsStore.markPlaintextTagSweep(db, channelId);
   }
-  // Real-id copies tagged just now pull their random-id twins along.
-  if (tagged > fromHistory) tagged += await mlsStore.tagSelfSendCopies(db, channelIds);
   return tagged;
 }

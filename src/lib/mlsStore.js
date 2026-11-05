@@ -816,7 +816,10 @@ export async function setLocalPlaintext(db, messageId, payload) {
  * `channelIds`, including tag-only rows (see tagLocalPlaintext). Used when this
  * person is removed from a Space, so nothing readable from it stays on the
  * device. Rows written before the tag existed are tagged on read (useMLS
- * getCachedMessage) and by the per-Space sweep (ritualsPlaintextTags).
+ * getCachedMessage) and by the per-Space sweep (ritualsPlaintextTags), both
+ * by exact server message id. Only rows tagged with one of `channelIds` are
+ * deleted: an untagged legacy row is never deleted on a removal, because it
+ * cannot be shown to belong to this Space.
  *
  * @param {IDBDatabase} db
  * @param {readonly string[]} channelIds
@@ -856,110 +859,16 @@ export async function tagLocalPlaintext(db, messageId, channelId) {
 
 const TAG_SWEEP_PREFIX = 'rituals-tag-sweep:';
 
-/**
- * How far apart a self-send's random-id row and its ack copy may be stored
- * (ack lag plus client/server clock skew, either way).
+/*
+ * Rituals fork (2026-11-05, review round 4): no content or time matching.
+ * A legacy row is tagged with a Space only by an exact key: its server message
+ * id, found in that Space's channel history (ritualsPlaintextTags) or read in
+ * that channel (useMLS getCachedMessage). Rows with no such key (the random-id
+ * copy an older build cached for each self-send: crypto.randomUUID(), never
+ * sent to the server, so no history or endpoint names it) stay untagged. An
+ * untagged row is never deleted by a removal; a guessed tag could delete
+ * another Space's history for good.
  */
-const SELF_SEND_PAIR_WINDOW_MS = 10 * 60 * 1000;
-/**
- * Two untagged, sender-less rows with the same envelope this close together
- * cannot be told apart (another Space's own send pair, a retry, or the same
- * text sent twice), so none of them is paired.
- */
-const SELF_SEND_CLUSTER_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-/**
- * @param {string} plaintext
- * @returns {string} the envelope in encodeEnvelopeV1 key order, or the raw text
- */
-function canonicalPlaintext(plaintext) {
-  try {
-    const e = JSON.parse(plaintext);
-    if (!e || typeof e !== 'object' || e.v !== 1) return plaintext;
-    return JSON.stringify({
-      v: 1,
-      text: e.text,
-      ...(Array.isArray(e.attachments) && e.attachments.length ? { attachments: e.attachments } : {}),
-      ...(e.gif ? { gif: e.gif } : {}),
-      ...(e.replyTo ? { replyTo: e.replyTo } : {}),
-      ...(typeof e.editedAt === 'number' ? { editedAt: e.editedAt } : {}),
-    });
-  } catch {
-    return plaintext;
-  }
-}
-
-/**
- * Rituals fork (2026-11-05): tag the random-id rows that self-sends wrote
- * before the channel tag existed. Each send cached its plaintext under a
- * client `crypto.randomUUID()` and, at the server ack, again under the real
- * message id. Only the real id can be found in a Space's history, so the sweep
- * never reaches the random-id copy.
- *
- * Pairing is scoped to one Space and one to one:
- * - only a tagged row in `scopeChannelIds` (the Space being swept) can give
- *   its channel; rows are never attributed to another Space's channel;
- * - the untagged row must have no sender and no other untagged, sender-less
- *   row with the same envelope within a day of it. An untagged twin nearby
- *   may be another Space's own (not yet swept) send pair, a retry, or the
- *   same text sent twice; with no stronger key, all of them are left alone;
- * - every tagged row with that envelope stored within minutes of it (any
- *   sender, any Space) must be in that one channel, else it is left alone.
- * A row left untagged is never deleted by a removal (it survives, unread by
- * any message view); a wrong tag could delete another Space's history.
- * Only tags; never deletes.
- *
- * @param {IDBDatabase} db
- * @param {readonly string[]} scopeChannelIds - channels of the Space being swept
- * @returns {Promise<number>} rows tagged
- */
-export async function tagSelfSendCopies(db, scopeChannelIds) {
-  const scope = new Set(scopeChannelIds ?? []);
-  if (!scope.size) return 0;
-  const rows = await getAll(db, 'localPlaintext');
-  /** @type {Map<string, Array<{ channelId: string, timestamp: number }>>} */
-  const taggedByText = new Map();
-  /** @type {Map<string, Array<{ key: string, timestamp: number }>>} */
-  const untaggedByText = new Map();
-  for (const row of rows) {
-    const key = String(row?.key ?? '');
-    if (typeof row?.plaintext !== 'string' || key.startsWith(TAG_SWEEP_PREFIX)) continue;
-    const k = canonicalPlaintext(row.plaintext);
-    const at = row.timestamp ?? 0;
-    if (row.channelId) {
-      const list = taggedByText.get(k) ?? [];
-      list.push({ channelId: row.channelId, timestamp: at });
-      taggedByText.set(k, list);
-    } else if (!row.senderId) {
-      const list = untaggedByText.get(k) ?? [];
-      list.push({ key, timestamp: at });
-      untaggedByText.set(k, list);
-    }
-  }
-  let tagged = 0;
-  for (const [k, candidates] of untaggedByText) {
-    const anchors = taggedByText.get(k);
-    if (!anchors) continue;
-    for (const u of candidates) {
-      const crowded = candidates.some(
-        (o) => o !== u && Math.abs(o.timestamp - u.timestamp) <= SELF_SEND_CLUSTER_WINDOW_MS,
-      );
-      if (crowded) continue;
-      const channels = new Set(
-        anchors
-          .filter((a) => Math.abs(a.timestamp - u.timestamp) <= SELF_SEND_PAIR_WINDOW_MS)
-          .map((a) => a.channelId),
-      );
-      if (channels.size !== 1) continue;
-      const [channelId] = channels;
-      if (!scope.has(channelId)) continue;
-      await tagLocalPlaintext(db, u.key, channelId);
-      tagged++;
-    }
-  }
-  return tagged;
-}
-
 
 /**
  * Rituals fork (2026-11-05): what the legacy tag sweep needs to know.
