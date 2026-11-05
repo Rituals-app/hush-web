@@ -1788,7 +1788,7 @@ export async function getMLSGroupInfo(token, channelId, baseUrl = '') {
   if (res.status === 404) return null;
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `getMLSGroupInfo ${res.status}`);
+    throw Object.assign(new Error(err.error || `getMLSGroupInfo ${res.status}`), { status: res.status });
   }
   return res.json();
 }
@@ -1826,7 +1826,15 @@ export async function putMLSGroupInfo(token, channelId, groupInfoBase64, epoch, 
  * @param {number} epoch - Epoch after this commit
  * @returns {Promise<void>}
  */
-export async function postMLSCommit(token, channelId, commitBytesBase64, groupInfoBase64, epoch, baseUrl = '') {
+export async function postMLSCommit(token, channelId, commitBytesBase64, groupInfoBase64, epoch, baseUrl = '', opts = {}) {
+  // Rituals fork (2026-11-05): the 6th argument may also be the options
+  // object `{ parentEpoch?, removes?, baseUrl? }`. Old servers ignore the
+  // extra fields; new ones use them for compare-and-set and pending removals.
+  if (baseUrl && typeof baseUrl === 'object') {
+    opts = baseUrl;
+    baseUrl = opts.baseUrl ?? '';
+  }
+  const { parentEpoch, removes } = opts ?? {};
   const res = await fetchWithAuth(token, `/api/mls/groups/${encodeURIComponent(channelId)}/commit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1835,11 +1843,19 @@ export async function postMLSCommit(token, channelId, commitBytesBase64, groupIn
       groupInfo: groupInfoBase64,
       epoch,
       ciphersuite: CURRENT_MLS_CIPHERSUITE,
+      ...(Number.isFinite(parentEpoch) ? { parentEpoch } : {}),
+      ...(Array.isArray(removes) && removes.length ? { removes } : {}),
     }),
   }, baseUrl);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `postMLSCommit ${res.status}`);
+    const error = new Error(err.error || `postMLSCommit ${res.status}`);
+    Object.assign(error, {
+      status: res.status,
+      code: typeof err.error === 'string' ? err.error : undefined,
+      currentEpoch: Number.isFinite(err.currentEpoch) ? err.currentEpoch : undefined,
+    });
+    throw error;
   }
 }
 
@@ -1950,7 +1966,7 @@ export async function getMLSCommitsSinceEpoch(token, channelId, sinceEpoch, limi
   );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `getMLSCommitsSinceEpoch ${res.status}`);
+    throw Object.assign(new Error(err.error || `getMLSCommitsSinceEpoch ${res.status}`), { status: res.status });
   }
   return res.json();
 }
