@@ -50,6 +50,13 @@ export const SPACE_SOURCE_LINKS = Object.freeze({
 /** Source commit of this build, when the image build passed one. */
 export const SPACE_SOURCE_COMMIT = envString(import.meta.env.VITE_RITUALS_SOURCE_COMMIT);
 
+/**
+ * File attachments need an S3 bucket on the server (STORAGE_BACKEND=s3); the
+ * Rituals host runs without one for now, so the attach button and file drops
+ * are off unless the image is built with VITE_RITUALS_ATTACHMENTS=1.
+ */
+export const SPACE_ATTACHMENTS_ENABLED = envString(import.meta.env.VITE_RITUALS_ATTACHMENTS) === '1';
+
 /** The dated modification notice (AGPL-3.0 section 5(a)). */
 export const SPACE_MODIFIED_ON = '2026-11-05';
 

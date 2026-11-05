@@ -48,6 +48,7 @@ import { MessageContent } from "@/components/message-content"
 import { MessageComposer } from "@/components/message-composer"
 import { cn } from "@/lib/utils"
 import { formatUserLabel } from "@/lib/userLabel"
+import { SPACE_ATTACHMENTS_ENABLED } from "@/lib/ritualsSpace"
 import { useChannelMessages, type ChatMessage } from "@/hooks/useChannelMessages"
 import {
   useAttachmentUploader,
@@ -265,10 +266,10 @@ export function RealChat({
     <MessageBodyContext.Provider value={messageBodyCtx}>
       <Chat
         className="relative h-full"
-        onDragEnter={handleDragEnter}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
+        onDragEnter={SPACE_ATTACHMENTS_ENABLED ? handleDragEnter : undefined}
+        onDragOver={SPACE_ATTACHMENTS_ENABLED ? handleDragOver : undefined}
+        onDragLeave={SPACE_ATTACHMENTS_ENABLED ? handleDragLeave : undefined}
+        onDrop={SPACE_ATTACHMENTS_ENABLED ? handleDrop : undefined}
       >
         {isFileDragActive ? <AttachmentDropOverlay /> : null}
         <ChatMessages
