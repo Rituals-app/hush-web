@@ -73,9 +73,15 @@ export async function sweepLegacyPlaintextTags({
         let oldest = null;
         for (const row of rows) {
           if (row?.id && pending.has(row.id)) {
-            await mlsStore.tagLocalPlaintext(db, row.id, channelId);
             pending.delete(row.id);
-            tagged++;
+            // Defense in depth: a row tagged since the state was read (another
+            // Space's sweep, a read) keeps its tag; never re-tag across Spaces.
+            const existing = await mlsStore.getLocalPlaintextChannelTag(db, row.id);
+            if (existing && existing !== channelId) continue;
+            if (!existing) {
+              await mlsStore.tagLocalPlaintext(db, row.id, channelId);
+              tagged++;
+            }
           }
           const ts = Date.parse(row?.timestamp);
           if (Number.isFinite(ts) && (oldest == null || ts < oldest)) oldest = ts;

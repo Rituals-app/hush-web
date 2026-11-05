@@ -126,4 +126,35 @@ describe('sweepLegacyPlaintextTags', () => {
     expect((await listAllLocalPlaintexts(db)).map((r) => r.messageId).sort()).toEqual(['b-1', 'legacy']);
     db.close();
   });
+
+  it('N1: interleaved ids of two Spaces with identical "ok" rows: S\'s sweep tags only S\'s ids, removal from S purges exactly those', async () => {
+    const db = await nextDb();
+    const T = Date.UTC(2026, 10, 2, 9);
+    for (const id of ['a', 'b', 'c', 'd']) {
+      await setLocalPlaintext(db, id, { plaintext: '{"v":1,"text":"ok"}', timestamp: T });
+    }
+    // S holds a and c, B holds b and d; this person is in both Spaces.
+    const pages = { 'ch-s': [[msg('a', T), msg('c', T)]] };
+    const fetchMessages = vi.fn(async (_t, _s, c) => pages[c]?.shift() ?? []);
+    await sweepLegacyPlaintextTags({ db, token: 't', serverId: 'srv-s', channelIds: ['ch-s'], fetchMessages, transcriptRows: () => [] });
+    expect((await getLocalPlaintext(db, 'b')).channelId).toBeUndefined();
+    expect((await getLocalPlaintext(db, 'd')).channelId).toBeUndefined();
+    expect((await deleteLocalPlaintextsForChannels(db, ['ch-s'])).sort()).toEqual(['a', 'c']);
+    expect(await getLocalPlaintext(db, 'b')).toEqual({ plaintext: '{"v":1,"text":"ok"}', timestamp: T });
+    expect(await getLocalPlaintext(db, 'd')).toEqual({ plaintext: '{"v":1,"text":"ok"}', timestamp: T });
+    db.close();
+  });
+
+  it('N1: a history id already tagged with another Space keeps that tag', async () => {
+    const db = await nextDb();
+    await setLocalPlaintext(db, 'm', { plaintext: 'x', timestamp: 1 });
+    const fetchMessages = vi.fn(async () => {
+      // Another Space's sweep tags m after this sweep read its state.
+      await tagLocalPlaintext(db, 'm', 'ch-b');
+      return [msg('m', 1)];
+    });
+    expect(await sweepLegacyPlaintextTags({ db, token: 't', serverId: 'srv-s', channelIds: ['ch-s'], fetchMessages, transcriptRows: () => [] })).toBe(0);
+    expect(await getLocalPlaintext(db, 'm')).toMatchObject({ channelId: 'ch-b' });
+    db.close();
+  });
 });

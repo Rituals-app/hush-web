@@ -857,6 +857,19 @@ export async function tagLocalPlaintext(db, messageId, channelId) {
   await put(db, 'localPlaintext', messageId, { ...(row ?? {}), channelId });
 }
 
+/**
+ * Rituals fork (2026-11-05): the channel a cached row (plaintext or tag-only)
+ * is already tagged with, if any.
+ *
+ * @param {IDBDatabase} db
+ * @param {string} messageId
+ * @returns {Promise<string | undefined>}
+ */
+export async function getLocalPlaintextChannelTag(db, messageId) {
+  const row = await get(db, 'localPlaintext', messageId);
+  return row?.channelId || undefined;
+}
+
 const TAG_SWEEP_PREFIX = 'rituals-tag-sweep:';
 
 /*
