@@ -1241,6 +1241,7 @@ export function AuthenticatedApp() {
         members={members}
         baseUrl={baseUrl}
         maxAttachmentBytes={activeMaxAttachmentBytes}
+        markReadEnabled
       />
     ) : null
 
