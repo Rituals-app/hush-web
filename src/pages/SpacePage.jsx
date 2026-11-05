@@ -95,43 +95,43 @@ function spaceInstanceUrl() {
 
 const ERROR_COPY = {
   no_ticket: {
-    title: 'Open this space from Rituals',
+    title: 'Open this Space from Rituals',
     body: 'Spaces open from a shared task in Rituals. Tap the people on the task to come back here.',
     retry: false,
   },
   expired: {
     title: 'This link has expired',
-    body: 'This link has expired. Open the space again from Rituals.',
+    body: 'This link has expired. Open the Space again from Rituals.',
     retry: false,
   },
   revoked: {
-    title: "You're no longer in this space",
+    title: "You're no longer in this Space",
     body: "It belongs to a shared task in Rituals, and you're no longer on that task.",
     retry: false,
   },
   full: {
-    title: 'This space is full',
-    body: "There's no room for another device in this space right now.",
+    title: 'This Space is full',
+    body: "There's no room for another device in this Space right now.",
     retry: false,
   },
   used: {
     title: 'This link was already used',
-    body: 'Open the space again from Rituals.',
+    body: 'Open the Space again from Rituals.',
     retry: false,
   },
   seat_conflict: {
-    title: 'Already in this space',
-    body: 'This device is already in this space as someone else.',
+    title: 'Already in this Space',
+    body: 'This device is already in this Space as someone else.',
     retry: false,
   },
   banned: {
-    title: "You can't join this space",
-    body: 'This device can no longer join this space.',
+    title: "You can't join this Space",
+    body: 'This device can no longer join this Space.',
     retry: false,
   },
   invalid: {
     title: "This link doesn't work",
-    body: 'Open the space again from Rituals.',
+    body: 'Open the Space again from Rituals.',
     retry: false,
   },
   unavailable: {
@@ -140,7 +140,7 @@ const ERROR_COPY = {
     retry: true,
   },
   network: {
-    title: "Couldn't reach the space",
+    title: "Couldn't reach the Space",
     body: 'Check your connection and try again.',
     retry: true,
   },
