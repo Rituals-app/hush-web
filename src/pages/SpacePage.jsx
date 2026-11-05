@@ -40,7 +40,7 @@ import {
   claimRitualsSpace,
   classifySpaceError,
   clearSpaceTicket,
-  isInRitualsHost,
+  isEmbedded,
   postToRitualsHost,
   readSpaceTicket,
   readSpaceTicketHints,
@@ -138,7 +138,7 @@ const ERROR_COPY = {
 
 function SpaceScreen({ children, footer = true }) {
   useBodyScrollMode(BODY_SCROLL_MODE.SCROLL);
-  const inHost = isInRitualsHost();
+  const inHost = isEmbedded();
   return (
     <main className="flex min-h-svh w-full flex-col bg-sidebar px-6 py-8 text-foreground">
       <div className="my-auto flex w-full max-w-sm flex-col items-center gap-6 self-center text-center">
@@ -188,7 +188,7 @@ function ProgressScreen({ title, detail }) {
 
 function ErrorScreen({ kind, onRetry, retrying }) {
   const copy = ERROR_COPY[kind] ?? ERROR_COPY.network;
-  const inHost = isInRitualsHost();
+  const inHost = isEmbedded();
   return (
     <SpaceScreen>
       <div className="flex flex-col items-center gap-2" role="alert">

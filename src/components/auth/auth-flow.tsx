@@ -22,7 +22,7 @@ import { RitualsMark } from "@/components/brand/HushLogo"
 import {
   RITUALS_HOME_URL,
   SPACE_SOURCE_LINKS,
-  isInRitualsHost,
+  isEmbedded,
 } from "@/lib/ritualsSpace"
 import { BODY_SCROLL_MODE, useBodyScrollMode } from "@/hooks/useBodyScrollMode"
 import { generateIdentityMnemonic } from "@/lib/bip39Identity"
@@ -251,7 +251,7 @@ function MainPanel({
       {/* Rituals fork: no "Sign up" here. A new identity is created on its
           own when someone opens a space from Rituals (the signed ticket is
           its invitation); this server takes no other registrations. */}
-      {isInRitualsHost() ? null : (
+      {isEmbedded() ? null : (
         <p className="text-center text-sm text-muted-foreground">
           New here?{" "}
           <a

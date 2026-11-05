@@ -25,7 +25,7 @@ import {
   SPACE_MODIFIED_ON,
   SPACE_SOURCE_COMMIT,
   SPACE_SOURCE_LINKS,
-  isInRitualsHost,
+  isEmbedded,
 } from "@/lib/ritualsSpace"
 import { APP_VERSION } from "@/utils/constants"
 
@@ -49,7 +49,7 @@ export function RitualsAboutDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const inHost = isInRitualsHost()
+  const inHost = isEmbedded()
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
@@ -99,10 +99,11 @@ export function RitualsAboutDialog({
 
 /**
  * The small links under the channel sidebar: Rituals home (normal browser
- * tabs only; the native app has its own way back), About, Source.
+ * tabs only; the native app and the Rituals hub have their own way back),
+ * About, Source.
  */
 export function RitualsSidebarFooterLinks({ onOpenAbout }: { onOpenAbout: () => void }) {
-  const inHost = isInRitualsHost()
+  const inHost = isEmbedded()
   const linkClass =
     "rounded-sm underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
   return (

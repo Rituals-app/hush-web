@@ -70,7 +70,7 @@ import {
   RitualsSidebarFooterLinks,
 } from "@/components/rituals/about-dialog"
 import { RecoveryPhraseReminder } from "@/components/rituals/recovery-phrase"
-import { RITUALS_HOME_URL, isInRitualsHost } from "@/lib/ritualsSpace"
+import { RITUALS_HOME_URL, isEmbedded } from "@/lib/ritualsSpace"
 import type { UserMenuUser } from "@/components/user-menu"
 import {
   Sheet,
@@ -416,8 +416,10 @@ function ServerHeader({
   // has no Add / Discover, Server settings, Invite people or Leave entries
   // (the server refuses them for Rituals spaces anyway). What is left: the
   // mobile space switcher, About (with the AGPL source notice) and, in a
-  // normal browser tab, a way back to Rituals.
-  const inHost = isInRitualsHost()
+  // normal browser tab, a way back to Rituals. Embedded (the Rituals hub's
+  // frame or the native app), Rituals draws its own rail around the space, so
+  // the switcher (the rail's stand-in on a phone) and the way back go too.
+  const inHost = isEmbedded()
   return (
     <SidebarMenu>
       <SidebarMenuItem>
@@ -444,29 +446,31 @@ function ServerHeader({
             side="bottom"
             sideOffset={4}
           >
-            <div className="md:hidden">
-              <DropdownMenuLabel className="text-xs text-muted-foreground">
-                Spaces
-              </DropdownMenuLabel>
-              <div className="max-h-64 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border">
-                {railEntries.map((entry) => (
-                  <DropdownMenuItem
-                    key={entry.id}
-                    onSelect={() => onSelectRail(entry.id)}
-                    className={cn(
-                      entry.id === activeRailId &&
-                        "bg-sidebar-accent text-sidebar-accent-foreground"
-                    )}
-                  >
-                    <span className="flex size-5 items-center justify-center rounded-md bg-sidebar-accent text-[10px] font-semibold text-sidebar-accent-foreground">
-                      {entry.initials}
-                    </span>
-                    {entry.name}
-                  </DropdownMenuItem>
-                ))}
+            {inHost ? null : (
+              <div className="md:hidden">
+                <DropdownMenuLabel className="text-xs text-muted-foreground">
+                  Spaces
+                </DropdownMenuLabel>
+                <div className="max-h-64 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border">
+                  {railEntries.map((entry) => (
+                    <DropdownMenuItem
+                      key={entry.id}
+                      onSelect={() => onSelectRail(entry.id)}
+                      className={cn(
+                        entry.id === activeRailId &&
+                          "bg-sidebar-accent text-sidebar-accent-foreground"
+                      )}
+                    >
+                      <span className="flex size-5 items-center justify-center rounded-md bg-sidebar-accent text-[10px] font-semibold text-sidebar-accent-foreground">
+                        {entry.initials}
+                      </span>
+                      {entry.name}
+                    </DropdownMenuItem>
+                  ))}
+                </div>
+                <DropdownMenuSeparator />
               </div>
-              <DropdownMenuSeparator />
-            </div>
+            )}
             <DropdownMenuItem onSelect={() => onOpenAbout()}>
               <InfoIcon className="size-4" />
               About Rituals Space

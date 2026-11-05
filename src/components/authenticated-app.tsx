@@ -64,7 +64,7 @@ import {
 } from "@/lib/api"
 import {
   RITUALS_HOME_URL,
-  isInRitualsHost,
+  isEmbedded,
   postToRitualsHost,
 } from "@/lib/ritualsSpace"
 import { RitualsMark } from "@/components/brand/HushLogo"
@@ -256,6 +256,10 @@ export function AuthenticatedApp() {
     }>
   }
   const isMobile = useIsMobile()
+  // Rituals fork (INTEGRATED.md §10): in the Rituals hub's frame or the native
+  // app, Rituals draws the rail (Task page, Project page, the space), so the
+  // space shows no server rail of its own and no shortcut to another space.
+  const embedded = React.useMemo(() => isEmbedded(), [])
 
   // Auth (home) instance, where the JWT lives and the device list is
   // hosted. Distinct from the currently-selected server, which may be a
@@ -1096,7 +1100,7 @@ export function AuthenticatedApp() {
         setIsCheatSheetOpen((prev) => !prev)
         return
       }
-      if (mod && /^[1-9]$/.test(key)) {
+      if (mod && /^[1-9]$/.test(key) && !embedded) {
         event.preventDefault()
         const idx = Number(key) - 1
         const target = railEntries[idx]
@@ -1133,6 +1137,7 @@ export function AuthenticatedApp() {
     handleSelectRail,
     handleToggleMute,
     handleToggleDeafen,
+    embedded,
   ])
 
   // Bridge: the desktop topbar omnibar dispatches a window-level event to
@@ -1362,15 +1367,21 @@ export function AuthenticatedApp() {
           })}
         </React.Fragment>
       ))}
-      <ServerRail
-        servers={railServers}
-        activeRailTarget={activeServerTarget ?? "home"}
-        onSelect={handleSelectRail}
-        getServerRole={getServerRole}
-      />
+      {embedded ? null : (
+        <ServerRail
+          servers={railServers}
+          activeRailTarget={activeServerTarget ?? "home"}
+          onSelect={handleSelectRail}
+          getServerRole={getServerRole}
+        />
+      )}
       <SidebarProvider
         data-desktop-chrome="authenticated-shell"
-        className="h-svh min-h-0! overflow-hidden bg-sidebar md:pl-(--rail-width)"
+        className={
+          embedded
+            ? "h-svh min-h-0! overflow-hidden bg-sidebar"
+            : "h-svh min-h-0! overflow-hidden bg-sidebar md:pl-(--rail-width)"
+        }
       >
         {isMobile
           ? activeServer
@@ -1602,7 +1613,7 @@ export function AuthenticatedApp() {
  * member any more, or the link belongs to someone else's device).
  */
 function SpaceUnavailableView() {
-  const inHost = isInRitualsHost()
+  const inHost = isEmbedded()
   React.useEffect(() => {
     postToRitualsHost({ type: "error", reason: "not_member" })
   }, [])

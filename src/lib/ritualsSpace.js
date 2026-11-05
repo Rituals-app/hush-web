@@ -502,7 +502,10 @@ export function classifySpaceError(err) {
   return 'network';
 }
 
-// ── Native host bridge (in-app web view) ────────────────────────────────────
+// ── Native host bridge (in-app web view) and the Rituals hub frame ─────────
+
+/** The only page allowed to frame the space (the host's CSP frame-ancestors) and to hear from it. */
+export const RITUALS_PARENT_ORIGIN = 'https://rituals.app';
 
 /** @returns {{ postMessage: (msg: unknown) => void }|null} */
 function getHostHandler() {
@@ -516,8 +519,49 @@ export function isInRitualsHost() {
   return Boolean(getHostHandler());
 }
 
+/** True when this page is framed (the space hub on rituals.app shows the space in an iframe). */
+export function isFramed() {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
+  }
+}
+
 /**
- * Posts a message to the native host; a no-op in a normal browser tab.
+ * Embedded mode (INTEGRATED.md §10): framed by the Rituals hub, or inside the
+ * native host. Rituals draws its own rail around the space there, so the
+ * space hides its server rail and its links back to Rituals; the channel
+ * sidebar, the chat, settings and the About · Source notice stay.
+ */
+export function isEmbedded() {
+  return isFramed() || isInRitualsHost();
+}
+
+/**
+ * In a frame, the space's own page changes replace its address instead of
+ * adding steps. A frame's steps join the tab's history above the hub, so the
+ * browser's Back would walk back through channels before it left the hub;
+ * nothing in this client goes back by history, so replacing loses nothing.
+ * Call once at startup, before the router.
+ */
+export function installEmbeddedHistory() {
+  if (!isFramed()) return;
+  try {
+    const replace = window.history.replaceState.bind(window.history);
+    window.history.pushState = function pushState(state, unused, url) {
+      replace(state, unused, url);
+    };
+  } catch {
+    // A locked-down history object: keep the default.
+  }
+}
+
+/**
+ * Posts a message to whatever hosts the space: the native host's handler in
+ * the in-app web view, and the Rituals hub (window.parent, only to
+ * RITUALS_PARENT_ORIGIN) in a frame; a no-op in a normal browser tab.
  * Messages: `{type:"ready"}` once the space is shown, `{type:"title",
  * title}` with the space name, and `{type:"error", reason}` when the page
  * shows a terminal error instead of a space.
@@ -526,11 +570,19 @@ export function isInRitualsHost() {
  */
 export function postToRitualsHost(message) {
   const handler = getHostHandler();
-  if (!handler) return;
-  try {
-    handler.postMessage(message);
-  } catch {
-    // The host went away (page closing); nothing to do.
+  if (handler) {
+    try {
+      handler.postMessage(message);
+    } catch {
+      // The host went away (page closing); nothing to do.
+    }
+  }
+  if (isFramed()) {
+    try {
+      window.parent.postMessage(message, RITUALS_PARENT_ORIGIN);
+    } catch {
+      // The frame is closing; nothing to do.
+    }
   }
 }
 

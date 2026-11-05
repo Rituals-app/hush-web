@@ -5,7 +5,7 @@ import { useGuildChannelIds } from "@/hooks/useGuildChannelIds"
 import { useTextChannelMLSSubscriptions } from "@/hooks/useTextChannelMLSSubscriptions"
 import { useServerModerationEvents } from "@/adapters/useServerModerationEvents"
 import { useServerJoinEvents } from "@/adapters/useServerJoinEvents"
-import { RITUALS_HOME_URL, isInRitualsHost } from "@/lib/ritualsSpace"
+import { RITUALS_HOME_URL, isEmbedded } from "@/lib/ritualsSpace"
 
 interface WsClientLike {
   on: (event: string, handler: (msg: unknown) => void) => void
@@ -93,10 +93,10 @@ export function PerServerListeners({
         // Rituals fork: a removal from the shared task in Rituals arrives
         // as a kick with no reason (signed sync). Say what happened and,
         // in a normal browser tab, offer the way back to Rituals (the
-        // native app has its own).
+        // native app and the Rituals hub have their own).
         toast.error("You're no longer in this space.", {
           description: "It belongs to a shared task in Rituals.",
-          action: isInRitualsHost()
+          action: isEmbedded()
             ? undefined
             : {
                 label: "Open Rituals",
