@@ -10,7 +10,7 @@ const pwaRegisterMock = vi.hoisted(() => ({
 }));
 
 const updateRequiredMock = vi.hoisted(() => ({
-  applyUpdate: vi.fn(async () => {}),
+  applyUpdate: vi.fn<(options?: { location?: Pick<Location, "reload"> }) => Promise<void>>(async () => {}),
 }));
 
 vi.mock("virtual:pwa-register", () => ({
@@ -75,9 +75,43 @@ describe("a waiting Service Worker (onNeedRefresh)", () => {
   let dialogEvents: Event[];
   const onDialogEvent = (event: Event) => dialogEvents.push(event);
 
+  /** A fake Web Locks API. `otherPages` shared presence locks are already held. */
+  function installLocks({ otherPages = 0 } = {}) {
+    const held: { name: string; mode: string }[] = [];
+    const locks = {
+      request: vi.fn((name: string, _options: unknown, callback: () => Promise<never>) => {
+        held.push({ name, mode: "shared" });
+        return callback();
+      }),
+      query: vi.fn(async () => ({
+        held: [
+          ...held,
+          ...Array.from({ length: otherPages }, () => ({ name: "hush_sw_page_presence", mode: "shared" })),
+        ],
+        pending: [],
+      })),
+    };
+    Object.defineProperty(navigator, "locks", { configurable: true, value: locks });
+    return locks;
+  }
+
+  /** Resolves with the outcome the next quiet-update decision records. */
+  function nextOutcome(): Promise<string> {
+    return new Promise((resolve) => {
+      const onDiagnostic = (event: Event) => {
+        const detail = (event as CustomEvent).detail;
+        if (detail?.event !== "sw-need-refresh") return;
+        window.removeEventListener("hush:diagnostic", onDiagnostic);
+        resolve(detail.details.outcome);
+      };
+      window.addEventListener("hush:diagnostic", onDiagnostic);
+    });
+  }
+
   beforeEach(() => {
     dialogEvents = [];
     installServiceWorkerContainer();
+    installLocks();
     window.sessionStorage.clear();
     pwaRegisterMock.registerSW.mockImplementation(() => pwaRegisterMock.updateSW);
     window.addEventListener("hush:update-required", onDialogEvent);
@@ -86,6 +120,8 @@ describe("a waiting Service Worker (onNeedRefresh)", () => {
   afterEach(() => {
     window.removeEventListener("hush:update-required", onDialogEvent);
     delete (navigator as unknown as { serviceWorker?: unknown }).serviceWorker;
+    delete (navigator as unknown as { locks?: unknown }).locks;
+    delete (document as unknown as { visibilityState?: unknown }).visibilityState;
     window.sessionStorage.clear();
     vi.restoreAllMocks();
     pwaRegisterMock.registerSW.mockReset();
@@ -93,17 +129,23 @@ describe("a waiting Service Worker (onNeedRefresh)", () => {
     updateRequiredMock.applyUpdate.mockClear();
   });
 
-  function fireNeedRefresh() {
+  function fireNeedRefresh(): Promise<string> {
+    const outcome = nextOutcome();
     const options = pwaRegisterMock.registerSW.mock.calls[0]?.[0] as RegisterOptions | undefined;
     expect(options?.onNeedRefresh).toBeTypeOf("function");
     options!.onNeedRefresh!();
+    return outcome;
   }
 
-  it("applies the update at once when nobody has touched the page", async () => {
+  function setHidden() {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+  }
+
+  it("applies the update at once on a fresh, untouched, only Space page", async () => {
     const { pwa, store } = await importFreshModules();
     pwa.registerPWA();
 
-    fireNeedRefresh();
+    expect(await fireNeedRefresh()).toBe("applied");
 
     expect(updateRequiredMock.applyUpdate).toHaveBeenCalledOnce();
     expect(dialogEvents).toHaveLength(0);
@@ -113,14 +155,14 @@ describe("a waiting Service Worker (onNeedRefresh)", () => {
     expect(pwaRegisterMock.updateSW).toHaveBeenCalledWith(true);
   });
 
-  it.each(["pointerdown", "keydown", "touchstart"])(
+  it.each(["pointerdown", "keydown", "touchstart", "wheel"])(
     "leaves the person alone after a %s, and keeps the activator for a real dialog",
     async (type) => {
       const { pwa, store } = await importFreshModules();
       pwa.registerPWA();
       window.dispatchEvent(new Event(type));
 
-      fireNeedRefresh();
+      expect(await fireNeedRefresh()).toBe("deferred-interacted");
 
       expect(updateRequiredMock.applyUpdate).not.toHaveBeenCalled();
       expect(dialogEvents).toHaveLength(0);
@@ -128,6 +170,74 @@ describe("a waiting Service Worker (onNeedRefresh)", () => {
       expect(window.sessionStorage.getItem(pwa.QUIET_UPDATE_STORAGE_KEY)).toBeNull();
     },
   );
+
+  it("never applies quietly while another Space page is open (it would reload that page too)", async () => {
+    installLocks({ otherPages: 1 });
+    const { pwa } = await importFreshModules();
+    pwa.registerPWA();
+
+    expect(await fireNeedRefresh()).toBe("deferred-other-pages");
+
+    expect(updateRequiredMock.applyUpdate).not.toHaveBeenCalled();
+    expect(dialogEvents).toHaveLength(0);
+    expect(window.sessionStorage.getItem(pwa.QUIET_UPDATE_STORAGE_KEY)).toBeNull();
+  });
+
+  it("never applies quietly without the Web Locks API (other pages cannot be seen)", async () => {
+    delete (navigator as unknown as { locks?: unknown }).locks;
+    const { pwa } = await importFreshModules();
+    pwa.registerPWA();
+
+    expect(await fireNeedRefresh()).toBe("deferred-other-pages");
+
+    expect(updateRequiredMock.applyUpdate).not.toHaveBeenCalled();
+  });
+
+  it("leaves a visible page alone when the build arrives after the first moments", async () => {
+    let clock = 1_800_000_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const { pwa } = await importFreshModules();
+    pwa.registerPWA();
+    clock += pwa.QUIET_UPDATE_WINDOW_MS + 1;
+
+    expect(await fireNeedRefresh()).toBe("deferred-late");
+
+    expect(updateRequiredMock.applyUpdate).not.toHaveBeenCalled();
+    expect(dialogEvents).toHaveLength(0);
+  });
+
+  it("applies a late build while the page is hidden and still untouched", async () => {
+    let clock = 1_800_000_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const { pwa } = await importFreshModules();
+    pwa.registerPWA();
+    clock += pwa.QUIET_UPDATE_WINDOW_MS + 1;
+    setHidden();
+
+    expect(await fireNeedRefresh()).toBe("applied");
+
+    expect(updateRequiredMock.applyUpdate).toHaveBeenCalledOnce();
+  });
+
+  it("skips the fallback reload when the person starts using the page meanwhile", async () => {
+    const skipped: string[] = [];
+    const onDiagnostic = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail?.event === "sw-quiet-reload-skipped") skipped.push(detail.details.reason);
+    };
+    window.addEventListener("hush:diagnostic", onDiagnostic);
+    const { pwa } = await importFreshModules();
+    pwa.registerPWA();
+
+    expect(await fireNeedRefresh()).toBe("applied");
+    const options = updateRequiredMock.applyUpdate.mock.calls[0]?.[0];
+    expect(options?.location?.reload).toBeTypeOf("function");
+    window.dispatchEvent(new Event("keydown"));
+    options!.location!.reload();
+
+    window.removeEventListener("hush:diagnostic", onDiagnostic);
+    expect(skipped).toEqual(["interacted"]);
+  });
 
   it("applies at most one quiet update per tab within the retry window", async () => {
     const now = 1_800_000_000_000;
@@ -139,7 +249,7 @@ describe("a waiting Service Worker (onNeedRefresh)", () => {
     );
     pwa.registerPWA();
 
-    fireNeedRefresh();
+    expect(await fireNeedRefresh()).toBe("deferred-recent");
 
     expect(updateRequiredMock.applyUpdate).not.toHaveBeenCalled();
     expect(dialogEvents).toHaveLength(0);
@@ -155,7 +265,7 @@ describe("a waiting Service Worker (onNeedRefresh)", () => {
     );
     pwa.registerPWA();
 
-    fireNeedRefresh();
+    expect(await fireNeedRefresh()).toBe("applied");
 
     expect(updateRequiredMock.applyUpdate).toHaveBeenCalledOnce();
     expect(window.sessionStorage.getItem(pwa.QUIET_UPDATE_STORAGE_KEY)).toBe(String(now));
@@ -168,7 +278,7 @@ describe("a waiting Service Worker (onNeedRefresh)", () => {
     const { pwa } = await importFreshModules();
     pwa.registerPWA();
 
-    fireNeedRefresh();
+    expect(await fireNeedRefresh()).toBe("deferred-no-storage");
 
     expect(updateRequiredMock.applyUpdate).not.toHaveBeenCalled();
     expect(dialogEvents).toHaveLength(0);
