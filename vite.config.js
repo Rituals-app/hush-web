@@ -91,7 +91,8 @@ export default defineConfig(({ mode }) => ({
     ...(httpsEnabled && !hasMkcertPair ? [basicSsl()] : []),
     // PWA / Service Worker. Conservative: precache app-shell only, never
     // touch /api, /ws, /livekit, or attachment routes. Update activation is
-    // gated by the Update Required dialog (see src/lib/pwaUpdate.js).
+    // gated by the boot step (src/lib/quietUpdate.ts) and the Update Required
+    // dialog (see src/lib/pwaUpdate.js).
     VitePWA(PWA_OPTIONS),
   ],
   resolve: {

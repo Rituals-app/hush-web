@@ -11,9 +11,11 @@
 //     external storage URL must never be served from the SW cache.
 //   * /admin/* is a separate backend-served dashboard and must never receive
 //     the user app shell as a navigation fallback.
-//   * index.html must always be fetched network-first so a deployed update
-//     becomes visible on the next navigation — users cannot get trapped on a
-//     stale HTML shell.
+//   * A controlled page's navigation is answered from the precached index.html
+//     (the generated worker tries the precache, the navigation route, then the
+//     runtime rules, and the first match wins), so that page runs its old build
+//     first. A deployed update is found by the browser's check of sw.js and
+//     applied by src/lib/quietUpdate.ts or the Update Required dialog.
 //   * No IndexedDB, no localStorage, no auth/vault/MLS access from the SW.
 //
 // Web Push and Background Sync are out of scope for this PWA foundation:
@@ -56,7 +58,7 @@ export const PRECACHE_GLOB_PATTERNS = Object.freeze([
 
 /**
  * Patterns excluded from the precache manifest. Anything that should not be
- * shipped as part of the offline shell goes here.
+ * shipped as part of the precached shell goes here.
  */
 export const PRECACHE_GLOB_IGNORE = Object.freeze([
   // Source maps are dev artefacts even when emitted.
@@ -69,8 +71,10 @@ export const PRECACHE_GLOB_IGNORE = Object.freeze([
 /**
  * Exact app-shell allowlist for the generated precache manifest.
  *
- * This keeps the offline shell useful without shipping every lazy route,
- * grammar pack, LiveKit worker, or dev-only debug tool into the SW cache.
+ * This keeps the SW cache small: it leaves out the app's main files, every lazy
+ * route, grammar pack, LiveKit worker, and dev-only debug tool. A page starting
+ * without a connection therefore runs only while the browser's HTTP cache still
+ * holds those files for its build.
  */
 export const APP_SHELL_PRECACHE_PATTERNS = Object.freeze([
   /^index\.html$/,
@@ -122,10 +126,13 @@ export const NAVIGATE_FALLBACK_DENYLIST = Object.freeze([
 ]);
 
 /**
- * Runtime caching rules. We declare ONE rule: index.html / navigations go
- * through NetworkFirst so an update is discovered without a hard refresh.
- * Everything else either lives in the precache (static shell) or bypasses
- * the SW entirely (API, WS, LiveKit, attachments).
+ * Runtime caching rules. We declare ONE rule, NetworkFirst for documents, and
+ * it does not decide what a navigation gets: navigateFallback answers every
+ * navigation its denylist allows from the precached shell before this rule is
+ * consulted, and this rule refuses whatever that denylist refuses. Updates are
+ * not found here (see the top of this file). Everything else either lives in
+ * the precache (static shell) or bypasses the SW entirely (API, WS, LiveKit,
+ * attachments).
  *
  * urlPattern uses a function so we can keep the denylist authoritative.
  */
@@ -212,9 +219,9 @@ export const PWA_OPTIONS = Object.freeze({
     manifestTransforms: [filterPrecacheManifest],
     navigateFallback: "index.html",
     navigateFallbackDenylist: [...NAVIGATE_FALLBACK_DENYLIST],
-    // Hush-crypto ships a sizeable WASM module that we DO want precached so
-    // the app stays usable offline; the precache manifest size limit needs
-    // to accommodate it (~10 MB headroom is generous and still cheap).
+    // Hush-crypto ships a sizeable WASM module that we DO want precached; the
+    // precache manifest size limit needs to accommodate it (~10 MB headroom is
+    // generous and still cheap).
     maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
     runtimeCaching: [...RUNTIME_CACHING],
     cleanupOutdatedCaches: true,
