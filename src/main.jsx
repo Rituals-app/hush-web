@@ -3,6 +3,7 @@ import './lib/ritualsSpaceBoot.js';
 import { ensureSpaceAccount, isFramed, postToRitualsParent, readSpaceTicket } from './lib/ritualsSpace';
 import { checkFrameStorage } from './lib/ritualsSpaceProbe';
 import { isFrameHostTopLevel, pageInstanceOrigin } from './lib/ritualsSpaceInstance';
+import { applyWaitingBuildAtStart } from './lib/quietUpdate';
 
 // Rituals fork (2026-11-05): one local Space identity per Rituals account. The
 // check runs before any other module of the app is loaded, so nothing has
@@ -75,6 +76,10 @@ async function boot() {
     showOpenInRituals();
     return;
   }
+  // Before anything starts: a newer build that is waiting is applied here,
+  // with one reload, when this is the only open Space page
+  // (src/lib/quietUpdate.ts). The pending ticket survives in sessionStorage.
+  if ((await applyWaitingBuildAtStart()) === 'applied') return;
   const ticket = readSpaceTicket();
   // Before any identity work (the account check may clear storage). The
   // frame boots whatever the partitioning; only unusable storage stops it.

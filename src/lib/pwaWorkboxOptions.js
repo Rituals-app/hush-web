@@ -169,9 +169,12 @@ export const RUNTIME_CACHING = Object.freeze([
 /**
  * Top-level options handed to vite-plugin-pwa's `VitePWA({...})`.
  *
- * registerType is "prompt": the new SW will activate ONLY after we call
- * `updateSW(true)` from the Update Required dialog. We never auto-skip-waiting
- * — auto-activation could swap the JS bundle out from under a tab that is
+ * registerType is "prompt": the new SW never activates itself. It activates
+ * when `updateSW(true)` runs from the Update Required dialog, when every page
+ * using the old SW has closed, or (Rituals fork) at the very start of a page
+ * load that finds itself the only open Space page, before any app module runs
+ * (src/lib/quietUpdate.ts). We never auto-skip-waiting while the app runs —
+ * auto-activation could swap the JS bundle out from under a tab that is
  * mid-flight on an MLS commit or vault operation.
  */
 /**
