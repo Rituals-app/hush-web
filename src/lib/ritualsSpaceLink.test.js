@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   RITUALS_SPACE_ORIGINS,
   consumeDeviceJustLinked,
-  consumeLinkOffer,
   earlierMessagesElsewhereBefore,
   isDeviceLinkAccountMismatch,
   isRitualsSpaceOrigin,
@@ -12,11 +11,9 @@ import {
   markDeviceJustLinked,
   markEarlierMessagesElsewhere,
   readSpaceAccount,
-  rememberLinkOffer,
-  shouldOfferDeviceLink,
   writeSpaceAccount,
 } from './ritualsSpaceLink.js';
-import { SPACE_ACCOUNT_KEY, peekRitualsSpace } from './ritualsSpace.js';
+import { SPACE_ACCOUNT_KEY } from './ritualsSpace.js';
 
 const ACCT_A = 'a'.repeat(64);
 const ACCT_B = 'b'.repeat(64);
@@ -95,86 +92,12 @@ describe('account marker', () => {
   });
 });
 
-describe('shouldOfferDeviceLink', () => {
-  it('keys only on the peek selfSeated === true', () => {
-    expect(shouldOfferDeviceLink({ hasIdentity: false, peek: { selfSeated: true, othersSeated: false } })).toBe(true);
-    expect(shouldOfferDeviceLink({ hasIdentity: false, peek: { selfSeated: false, othersSeated: true } })).toBe(false);
-    expect(shouldOfferDeviceLink({ hasIdentity: false, peek: null })).toBe(false);
-    expect(shouldOfferDeviceLink({ hasIdentity: false, peek: undefined })).toBe(false);
-    expect(shouldOfferDeviceLink({ hasIdentity: true, peek: { selfSeated: true } })).toBe(false);
-  });
-});
-
-const TICKET = `rt1.${'A'.repeat(40)}.${'B'.repeat(43)}`;
-
-function jsonResponse(status, body) {
-  return { ok: status >= 200 && status < 300, status, json: async () => body };
-}
-
-describe('peekRitualsSpace + offer gate', () => {
-  it('selfSeated: offers to add this device', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse(200, { claimed: true, selfSeated: true, othersSeated: true }));
-    const peek = await peekRitualsSpace(TICKET, 'https://space.rit.al', { fetchImpl });
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('https://space.rit.al/api/rituals/spaces/peek');
-    expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body)).toEqual({ ticket: TICKET });
-    expect(init.headers.Authorization).toBeUndefined();
-    expect(peek).toEqual({ claimed: true, selfSeated: true, othersSeated: true });
-    expect(shouldOfferDeviceLink({ hasIdentity: false, peek })).toBe(true);
-  });
-
-  it('not seated: registers as before', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse(200, { claimed: false, selfSeated: false, othersSeated: false }));
-    const peek = await peekRitualsSpace(TICKET, '', { fetchImpl });
-    expect(peek).toEqual({ claimed: false, selfSeated: false, othersSeated: false });
-    expect(shouldOfferDeviceLink({ hasIdentity: false, peek })).toBe(false);
-  });
-
-  it('endpoint missing (404), non-JSON, network error or timeout: null, registers as before', async () => {
-    const missing = await peekRitualsSpace(TICKET, '', { fetchImpl: async () => jsonResponse(404, { error: 'not_found' }) });
-    expect(missing).toBeNull();
-    const nonJson = await peekRitualsSpace(TICKET, '', {
-      fetchImpl: async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('bad'); } }),
-    });
-    expect(nonJson).toBeNull();
-    const offline = await peekRitualsSpace(TICKET, '', { fetchImpl: async () => { throw new TypeError('offline'); } });
-    expect(offline).toBeNull();
-    const slow = await peekRitualsSpace(TICKET, '', {
-      timeoutMs: 5,
-      fetchImpl: (_url, init) => new Promise((_resolve, reject) => {
-        init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
-      }),
-    });
-    expect(slow).toBeNull();
-    for (const peek of [missing, nonJson, offline, slow]) {
-      expect(shouldOfferDeviceLink({ hasIdentity: false, peek })).toBe(false);
-    }
-  });
-
-  it('does not call the server for an implausible ticket', async () => {
-    const fetchImpl = vi.fn();
-    expect(await peekRitualsSpace('nope', '', { fetchImpl })).toBeNull();
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
-});
-
 describe('link markers', () => {
   it('just-linked is consumed once and carries the link time', () => {
     expect(consumeDeviceJustLinked()).toBeNull();
     markDeviceJustLinked(1_700_000_000_000);
     expect(consumeDeviceJustLinked()).toBe(1_700_000_000_000);
     expect(consumeDeviceJustLinked()).toBeNull();
-  });
-
-  it('the link offer is consumed once', () => {
-    expect(consumeLinkOffer()).toBeNull();
-    rememberLinkOffer({ othersSeated: true });
-    expect(consumeLinkOffer()).toEqual({ othersSeated: true });
-    expect(consumeLinkOffer()).toBeNull();
-    rememberLinkOffer({ othersSeated: false });
-    expect(consumeLinkOffer()).toEqual({ othersSeated: false });
   });
 
   it('earlier-elsewhere is per space and bounded by the link time', () => {

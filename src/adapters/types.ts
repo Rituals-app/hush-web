@@ -62,6 +62,9 @@ export interface ServerMember {
   createdAt: string | null
   joinedAt: string | null
   homeInstance: string | null
+  /** Rituals fork: same opaque key on every device of one person in a
+   *  Space. Absent elsewhere. */
+  personKey?: string | null
 }
 
 export interface Server {

@@ -29,8 +29,6 @@ export const RITUALS_SPACE_ORIGINS = Object.freeze([
 
 /** Set on a device right after a successful Space link; consumed by /space. */
 const JUST_LINKED_KEY = 'rituals_space_just_linked';
-/** Set when the person taps "Add this device"; read once after the link. */
-const LINK_OFFER_KEY = 'rituals_space_link_offer';
 /** Spaces where a linked device should say earlier messages are elsewhere. */
 const EARLIER_ELSEWHERE_KEY = 'rituals_space_earlier_elsewhere';
 
@@ -128,22 +126,6 @@ export function isSpaceDeviceLink({ bundleAcct, localAcct, onRitualsOrigin }) {
   return Boolean(onRitualsOrigin && localAcct && bundleAcct && bundleAcct === localAcct);
 }
 
-/**
- * Whether /space should offer "Add this device" before creating a fresh
- * identity. Keyed on the server's ticket-verified peek
- * (`peekRitualsSpace`): only `selfSeated === true` (this Rituals account
- * already holds a seat in the space, so another device has the identity)
- * turns it on. A null peek (endpoint missing, error, timeout) keeps today's
- * silent registration. Unsigned ticket payload fields are never used here.
- *
- * @param {{ hasIdentity: boolean, peek: { selfSeated?: boolean }|null|undefined }} input
- * @returns {boolean}
- */
-export function shouldOfferDeviceLink({ hasIdentity, peek }) {
-  if (hasIdentity) return false;
-  return peek?.selfSeated === true;
-}
-
 function readFlag(key) {
   try {
     return window.localStorage.getItem(key);
@@ -176,22 +158,6 @@ export function consumeDeviceJustLinked() {
   writeFlag(JUST_LINKED_KEY, null);
   const at = Number(raw);
   return Number.isFinite(at) && at > 0 ? at : null;
-}
-
-/** Called when the person taps "Add this device" on the offer screen. */
-export function rememberLinkOffer({ othersSeated }) {
-  writeFlag(LINK_OFFER_KEY, othersSeated === true ? '1' : '0');
-}
-
-/**
- * Once: what the peek said about other people when the offer was taken.
- * @returns {{ othersSeated: boolean }|null}
- */
-export function consumeLinkOffer() {
-  const raw = readFlag(LINK_OFFER_KEY);
-  if (raw == null) return null;
-  writeFlag(LINK_OFFER_KEY, null);
-  return { othersSeated: raw === '1' };
 }
 
 function readEarlierElsewhere() {

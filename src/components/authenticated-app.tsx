@@ -56,6 +56,7 @@ import {
 } from "@/lib/instanceRuntimeConfig"
 import * as mlsStore from "@/lib/mlsStore"
 import { buildGuildRouteRef, parseGuildRouteRef } from "@/lib/slugify"
+import { onePerPerson, onePersonPerVoiceSlot } from "@/lib/spacePeople"
 import {
   kickUser,
   createGuildChannel,
@@ -441,6 +442,12 @@ export function AuthenticatedApp() {
 
   const currentUserRole = React.useMemo(
     () => members.find((m) => m.id === currentUserId)?.role,
+    [members, currentUserId]
+  )
+  // Rituals fork: one row per person (all of a person's devices) for the
+  // member list and its counts.
+  const people = React.useMemo(
+    () => onePerPerson(members, currentUserId),
     [members, currentUserId]
   )
 
@@ -997,10 +1004,12 @@ export function AuthenticatedApp() {
           p.id === currentUserId ? { ...p, ...selfOverrides } : p,
         )
       }
+      merged = onePersonPerVoiceSlot(merged, members, currentUserId)
       return merged.length > 0 ? { ...c, participants: merged } : c
     })
   }, [
     channels,
+    members,
     voicePresence,
     joinedVoice?.channelId,
     currentUserId,
@@ -1287,7 +1296,7 @@ export function AuthenticatedApp() {
             serverName: activeServer.name,
           }}
           headerIcon={sysHeader.icon}
-          members={members}
+          members={people}
           currentUserRole={currentUserRole}
           onKickMember={handleKickMember}
           onDirectMessage={handleDirectMessage}
@@ -1313,7 +1322,7 @@ export function AuthenticatedApp() {
         serverId: activeServer.id,
         serverName: activeServer.name,
       }}
-      members={members}
+      members={people}
       currentUserRole={currentUserRole}
       onKickMember={handleKickMember}
       onDirectMessage={handleDirectMessage}

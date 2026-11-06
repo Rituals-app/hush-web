@@ -16,6 +16,8 @@ import {
   MembersSidebar,
   type ServerMember,
 } from "./members-sidebar"
+import { onePerPerson, unifyPeople } from "@/lib/spacePeople"
+import type { ServerMember as AdapterMember } from "@/adapters/types"
 
 type MemberHandler = (
   member: ServerMember,
@@ -77,6 +79,35 @@ describe("MembersSidebar", () => {
     expect(screen.getByText("Owner")).toBeInTheDocument()
   })
 
+  it("lists a person with two devices once, and keeps members with no key", () => {
+    const row = (id: string, name: string, personKey?: string): AdapterMember => ({
+      id,
+      name,
+      initials: name.slice(0, 2).toUpperCase(),
+      presence: "online",
+      role: "member",
+      username: `${name.toLowerCase()}-${id}`,
+      displayName: name,
+      createdAt: null,
+      joinedAt: null,
+      homeInstance: null,
+      ...(personKey ? { personKey } : {}),
+    })
+    const people = onePerPerson(
+      unifyPeople([
+        row("a1", "Alice", "pk-a"),
+        row("a2", "Alice", "pk-a"),
+        row("b1", "Bob"),
+        row("b2", "Bob"),
+      ]),
+      "a2"
+    )
+    expect(people.map((m) => m.id)).toEqual(["a2", "b1", "b2"])
+    setup({ members: people })
+    expect(screen.getAllByText("Alice")).toHaveLength(1)
+    expect(screen.getAllByText("Bob")).toHaveLength(2)
+  })
+
   it("shows the username metadata even when it equals the display label", async () => {
     setup({
       members: [
@@ -122,6 +153,22 @@ describe("MembersSidebar", () => {
     })
 
     expect(screen.getByText(/remove from space/i)).toBeInTheDocument()
+  })
+
+  it("hides kick on a Space member row (one with a person key)", async () => {
+    setup({
+      currentUserRole: "owner",
+      onKickMember: vi.fn(),
+      members: [{ ...MOD, personKey: "pk-mod" }],
+    })
+
+    const u = userEvent.setup()
+    await u.pointer({
+      keys: "[MouseRight]",
+      target: screen.getByText("Mod"),
+    })
+
+    expect(screen.queryByText(/remove from space/i)).not.toBeInTheDocument()
   })
 
   it("hides kick on the owner row regardless of actor", async () => {

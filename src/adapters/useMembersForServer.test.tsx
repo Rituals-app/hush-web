@@ -214,6 +214,38 @@ describe("useMembersForServer", () => {
     )
   })
 
+  it("shows every device of one person (same personKey) as that person", async () => {
+    getGuildMembers.mockResolvedValue([
+      { id: "a2", username: "alice-4821", displayName: "Alice", personKey: "pk-a", joinedAt: "2026-11-05T10:00:00Z" },
+      { id: "a1", username: "alice-1203", displayName: "Alice M", personKey: "pk-a", joinedAt: "2026-11-01T10:00:00Z" },
+      { id: "b1", username: "bob", displayName: "Bob", permissionLevel: 0 },
+    ])
+
+    const { result } = renderHook(
+      () =>
+        useMembersForServer({
+          serverId: "g1",
+          token: "tok",
+          baseUrl: "https://a.example.com",
+          currentUserId: "b1",
+          onlineUserIds: new Set(["a2"]),
+          hasOnlineSnapshot: true,
+        }),
+      { wrapper: createWrapper() },
+    )
+
+    await waitFor(() => expect(result.current.members).toHaveLength(3))
+    const [a2, a1, b1] = result.current.members
+    // The latest-joined device names the person; no per-device handle; online if any device is.
+    expect([a2.name, a1.name]).toEqual(["Alice", "Alice"])
+    expect([a2.username, a1.username]).toEqual([null, null])
+    expect([a2.presence, a1.presence]).toEqual(["online", "online"])
+    expect(a1.personKey).toBe("pk-a")
+    // A member with no key is unchanged.
+    expect(b1).toMatchObject({ name: "Bob", username: "bob", presence: "offline" })
+    expect(b1.personKey).toBeUndefined()
+  })
+
   it("refetches through the server-state query", async () => {
     getGuildMembers
       .mockResolvedValueOnce([{ id: "u1", username: "alice", permissionLevel: 0 }])

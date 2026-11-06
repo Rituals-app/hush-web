@@ -7,6 +7,7 @@ import * as React from "react"
 import { useQuery } from "@tanstack/react-query"
 import { getGuildMembers } from "@/lib/api"
 import { formatUserLabel } from "@/lib/userLabel"
+import { unifyPeople } from "@/lib/spacePeople"
 
 import {
   type ServerMember,
@@ -24,6 +25,7 @@ interface RawMember {
   createdAt?: string | null
   joinedAt?: string | null
   homeInstance?: string | null
+  personKey?: string | null
 }
 
 interface UseMembersArgs {
@@ -87,7 +89,10 @@ export function useMembersForServer({
   const raw = query.data ?? []
 
   const members = React.useMemo<ServerMember[]>(
-    () => raw.map((m) => mapRawMember(m, onlineUserIds, hasOnlineSnapshot)),
+    () =>
+      unifyPeople(
+        raw.map((m) => mapRawMember(m, onlineUserIds, hasOnlineSnapshot))
+      ),
     [raw, onlineUserIds, hasOnlineSnapshot]
   )
 
@@ -136,6 +141,9 @@ export function mapRawMember(
     createdAt: nonBlankOrNull(m.createdAt),
     joinedAt: nonBlankOrNull(m.joinedAt),
     homeInstance: nonBlankOrNull(m.homeInstance),
+    ...(nonBlankOrNull(m.personKey)
+      ? { personKey: nonBlankOrNull(m.personKey) }
+      : {}),
   }
 }
 
