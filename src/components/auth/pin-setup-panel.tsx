@@ -30,6 +30,7 @@ import { PIN_LENGTH } from "@/components/auth/pin-otp"
 import { PinOtpSetup } from "@/components/auth/pin-otp-setup"
 import { useAuth } from "@/contexts/AuthContext"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { postRitualsFrameBusy } from "@/lib/ritualsSpace"
 
 const STRENGTH_LABELS = ["", "Weak", "Fair", "Good", "Strong"] as const
 
@@ -63,6 +64,12 @@ export function PinSetupPanel() {
   const [confirm, setConfirm] = React.useState("")
   const [submitting, setSubmitting] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+
+  // Rituals fork: in the Rituals pane this screen waits on the person, so the
+  // pane shows it at once (a no-op outside a frame).
+  React.useEffect(() => {
+    postRitualsFrameBusy()
+  }, [])
 
   const isPin = mode === "pin"
   // Segmented OTP cells are only used on mobile so the digit-by-digit

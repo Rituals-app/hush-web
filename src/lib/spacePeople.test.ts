@@ -66,6 +66,25 @@ describe("spacePeople", () => {
     expect(people[1].id).toBe("c")
   })
 
+  it("gives my own merged row the latest device's name and this device's role", () => {
+    const seats = [
+      // This device: the oldest seat, an owner, offline.
+      row({ id: "me1", personKey: "me", role: "owner", displayName: "Sam", name: "Sam", joinedAt: "2026-01-01" }),
+      // Another of my devices, joined later, renamed, online, a member.
+      row({ id: "me2", personKey: "me", role: "member", displayName: "Sam K", name: "Sam K", joinedAt: "2026-03-01", presence: "online" }),
+      // My newest device has no display name yet: the latest named one wins.
+      row({ id: "me3", personKey: "me", role: "member", joinedAt: "2026-04-01" }),
+    ]
+    const people = onePerPerson(unifyPeople(seats), "me1")
+    expect(people).toEqual([
+      expect.objectContaining({ id: "me1", name: "Sam K", displayName: "Sam K", role: "owner", presence: "online", username: null }),
+    ])
+    // From another device of mine (a member), the same name and that device's role.
+    expect(onePerPerson(unifyPeople(seats), "me3")).toEqual([
+      expect.objectContaining({ id: "me3", name: "Sam K", role: "member" }),
+    ])
+  })
+
   it("shows one voice entry per person and keeps this device's own entry", () => {
     const members = unifyPeople([
       row({ id: "a1", personKey: "k", displayName: "Ann", name: "Ann" }),

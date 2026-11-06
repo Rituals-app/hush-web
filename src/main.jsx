@@ -48,6 +48,8 @@ function showSwitchBlocked() {
 // door opens the space top-level on the Space host (ticket in the fragment).
 function showStorageUnavailable(ticket, reason) {
   postToRitualsParent({ type: 'storage-unavailable', reason });
+  // The notice is a pane state: shown at once, not after the settle timer.
+  postToRitualsParent({ type: 'busy' });
   const open = document.createElement('button');
   open.type = 'button';
   open.textContent = 'Open space \u2197';

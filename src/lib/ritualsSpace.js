@@ -676,6 +676,18 @@ export function postToRitualsParent(message) {
   }
 }
 
+/**
+ * Tells the Rituals web client that this frame is showing a screen of its own
+ * that waits on the person (PIN unlock or setup, linking this device, a
+ * storage or switch notice), so the pane shows it at once instead of keeping
+ * it hidden until the parent's settle timer. Frame-only, via
+ * postToRitualsParent (exact parent origin); a no-op when not framed. Safe to
+ * repeat: the parent ignores it once the frame is shown.
+ */
+export function postRitualsFrameBusy() {
+  postToRitualsParent({ type: 'busy' });
+}
+
 /** False while the parent says the Space pane is hidden (`{type:"visible", visible:false}`). */
 export function isFrameVisible() {
   return frameVisible;
