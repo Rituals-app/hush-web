@@ -126,6 +126,18 @@ function SystemEventRow({
   resolveActorLabel?: (id: string) => string | null
 }) {
   const ts = formatTimestamp(event.createdAt)
+  if (event.eventType === "member_new_device") {
+    // Rituals fork: a later device of a person already here.
+    const who = trimOrNull(resolveActorLabel?.(event.actorId)) ?? "Someone"
+    return (
+      <div className="flex items-baseline justify-between gap-2 px-3 py-1">
+        <span className="text-xs text-muted-foreground">
+          {who} opened this space on a new device.
+        </span>
+        <span className="text-xs text-muted-foreground tabular-nums">{ts}</span>
+      </div>
+    )
+  }
   return (
     <div className="flex flex-col gap-1 rounded-md border bg-card px-3 py-2">
       <div className="flex items-baseline justify-between gap-2">

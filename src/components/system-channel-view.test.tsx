@@ -122,4 +122,44 @@ describe("SystemChannelView", () => {
     expect(screen.getByText(/abcd…7890/)).toBeInTheDocument()
     expect(screen.getByText(/spam wave/i)).toBeInTheDocument()
   })
+
+  it("shows a later device of a person as one quiet line", () => {
+    mockHook.mockReturnValue({
+      events: [
+        {
+          id: "e2",
+          eventType: "member_new_device",
+          actorId: "device-two",
+          createdAt: "2026-11-05T12:00:00Z",
+        },
+        {
+          id: "e3",
+          eventType: "member_joined",
+          actorId: "carol-one",
+          createdAt: "2026-11-05T12:01:00Z",
+        },
+      ],
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    renderWithShell(
+      <SystemChannelView
+        serverId="g1"
+        source="server-log"
+        token="tok"
+        baseUrl=""
+        resolveActorLabel={(id) => (id === "device-two" ? "Alice" : "Carol")}
+      />
+    )
+
+    expect(
+      screen.getByText("Alice opened this space on a new device.")
+    ).toBeInTheDocument()
+    expect(screen.queryByText("Member New Device")).toBeNull()
+    // A first seat keeps today's row.
+    expect(screen.getByText("Member Joined")).toBeInTheDocument()
+    expect(screen.getAllByText(/Actor:/)).toHaveLength(1)
+  })
 })
