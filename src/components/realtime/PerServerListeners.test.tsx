@@ -31,6 +31,11 @@ vi.mock("@/hooks/useAuth", () => ({
   getDeviceId: () => "device-self",
 }))
 
+vi.mock("sonner", () => ({
+  toast: Object.assign(vi.fn(), { error: vi.fn() }),
+}))
+
+import { toast } from "sonner"
 import { PerServerListeners } from "./PerServerListeners"
 
 interface FakeWs {
@@ -140,6 +145,85 @@ describe("PerServerListeners", () => {
         reason: "Spam",
       })
     })
+  })
+
+  // Rituals fork: the server retires this device's seat when the person opens
+  // the Space on a sixth device (reason "device_limit"). The person is still
+  // in the Space: calm copy, no raw reason, nothing posted to the Rituals host
+  // (so the hub never reads it as a revoke), and the shell still routes away.
+  function renderSelf(onSelfRemoved: () => void) {
+    const ws = makeWs()
+    render(
+      <PerServerListeners
+        instanceUrl="https://i.example.com"
+        wsClient={ws as unknown as Parameters<typeof PerServerListeners>[0]["wsClient"]}
+        token="tok"
+        currentUserId="user-self"
+        serverId="srv-bg"
+        serverName="Background"
+        refetchMembers={vi.fn()}
+        onSelfRemoved={onSelfRemoved}
+      />,
+      { wrapper: createWrapper() },
+    )
+    return ws
+  }
+
+  it("tells a device retired by the seat cap calmly and posts nothing to the Rituals parent", async () => {
+    const parentPost = vi.fn()
+    const top = vi.spyOn(window, "top", "get").mockReturnValue({} as Window)
+    const parent = vi
+      .spyOn(window, "parent", "get")
+      .mockReturnValue({ postMessage: parentPost } as unknown as Window)
+    try {
+      const onSelfRemoved = vi.fn()
+      const ws = renderSelf(onSelfRemoved)
+      await waitFor(() => expect(ws.on).toHaveBeenCalledWith("member_kicked", expect.any(Function)))
+
+      ws.emit("member_kicked", {
+        type: "member_kicked",
+        server_id: "srv-bg",
+        user_id: "user-self",
+        reason: "device_limit",
+      })
+
+      await waitFor(() => {
+        expect(onSelfRemoved).toHaveBeenCalledWith({
+          instanceUrl: "https://i.example.com",
+          serverId: "srv-bg",
+          event: "kick",
+          reason: "device_limit",
+        })
+      })
+      expect(toast).toHaveBeenCalledTimes(1)
+      expect(toast).toHaveBeenCalledWith(
+        "This device left the space because you opened it on more devices.",
+        { description: "Open it again from Rituals to rejoin.", action: undefined },
+      )
+      expect(toast.error).not.toHaveBeenCalled()
+      expect(parentPost).not.toHaveBeenCalled()
+    } finally {
+      top.mockRestore()
+      parent.mockRestore()
+    }
+  })
+
+  it("offers Open Rituals for a seat-cap retirement in a normal browser tab", async () => {
+    const onSelfRemoved = vi.fn()
+    const ws = renderSelf(onSelfRemoved)
+    await waitFor(() => expect(ws.on).toHaveBeenCalledWith("member_kicked", expect.any(Function)))
+
+    ws.emit("member_kicked", {
+      type: "member_kicked",
+      server_id: "srv-bg",
+      user_id: "user-self",
+      reason: "device_limit",
+    })
+
+    await waitFor(() => expect(onSelfRemoved).toHaveBeenCalledTimes(1))
+    const options = vi.mocked(toast).mock.calls[0]?.[1] as { action?: { label: string } }
+    expect(options.action?.label).toBe("Open Rituals")
+    expect(toast.error).not.toHaveBeenCalled()
   })
 
   it("ignores moderation frames addressed to a different server", async () => {

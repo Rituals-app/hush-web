@@ -103,6 +103,13 @@ export async function ensureSpaceAccount(ticket) {
 }
 export const PHRASE_UNSAVED_KEY = 'rituals_space_phrase_unsaved';
 export const RITUALS_HOME_URL = 'https://rituals.app';
+/**
+ * The `member_kicked` reason the server sends when it retires this device's
+ * seat because the person opened the Space on another device (five device
+ * seats per person). The person is still in the Space; a revoke from the
+ * shared task carries no reason.
+ */
+export const RITUALS_KICK_DEVICE_LIMIT = 'device_limit';
 
 const TICKET_PREFIX = 'rt1.';
 const TICKET_MAX_LENGTH = 2048;

@@ -316,6 +316,51 @@ describe('LinkDevice', () => {
     });
   });
 
+  // Rituals fork: in the Rituals pane, linking waits on the person, so the
+  // page tells the parent once on mount (busy), not on every re-render.
+  it('posts busy to the Rituals parent once when it mounts in a frame', async () => {
+    const parentPost = vi.fn();
+    const top = vi.spyOn(window, 'top', 'get').mockReturnValue({});
+    const parent = vi.spyOn(window, 'parent', 'get').mockReturnValue({ postMessage: parentPost });
+    try {
+      mockCreateDeviceIdentity.mockResolvedValue({ publicKeyBase64: 'device-public-key' });
+      mockCreateSessionKeyPair.mockResolvedValue({
+        privateKey: { type: 'private-key' },
+        publicKeyBase64: 'session-public-key',
+      });
+      mockCreateDeviceLinkRequest.mockResolvedValue({
+        requestId: 'req-1',
+        secret: 'secret-1',
+        code: 'ABCD1234',
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      });
+      mockBuildLinkApprovalUrl.mockReturnValue('https://app.gethush.live/link-device?payload=abc');
+      mockQrToDataUrl.mockResolvedValue('data:image/png;base64,qr-code');
+      mockConsumeDeviceLinkResult.mockResolvedValue({ status: 'pending' });
+
+      const view = renderLinkDevice('/link-device?mode=new');
+
+      // Loading, then the active QR state, then a parent re-render: several
+      // renders of the page, one mount.
+      expect(await screen.findByAltText(/device link qr code/i)).toBeInTheDocument();
+      await waitFor(() => expect(mockConsumeDeviceLinkResult).toHaveBeenCalled());
+      view.rerender(
+        <MemoryRouter initialEntries={['/link-device?mode=new']}>
+          <Routes>
+            <Route path="/link-device" element={<LinkDevice />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      expect(screen.getByAltText(/device link qr code/i)).toBeInTheDocument();
+      const busy = parentPost.mock.calls.filter(([message]) => message?.type === 'busy');
+      expect(busy).toHaveLength(1);
+      expect(busy[0][1]).toBe('https://rituals.app');
+    } finally {
+      top.mockRestore();
+      parent.mockRestore();
+    }
+  });
+
   it('renders all seven stable regions in the steady QR-active state', async () => {
     mockCreateDeviceIdentity.mockResolvedValue({ publicKeyBase64: 'device-public-key' });
     mockCreateSessionKeyPair.mockResolvedValue({
