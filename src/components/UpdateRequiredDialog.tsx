@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   AlertDialog,
@@ -46,9 +46,29 @@ export function UpdateRequiredDialog() {
   const dismissible = isDismissibleReason(reason);
   const copy = dismissible ? COPY.newerBuild : COPY.critical;
   const [busy, setBusy] = useState(false);
+  const focusBeforeOpen = useRef<HTMLElement | null>(null);
 
   function onOpenChange(next: boolean) {
     if (!next && !busy) dismiss();
+  }
+
+  // Rituals fork: no click opens this dialog, and it can open while the person
+  // is typing. Focus goes to the dialog itself, not a button: a screen reader
+  // still announces it and Tab reaches the buttons, but the next keystroke
+  // presses nothing. Update reloads the page, so this holds for a critical
+  // update too. Closing gives the focus back.
+  function onOpenAutoFocus(event: Event) {
+    event.preventDefault();
+    const active = document.activeElement;
+    focusBeforeOpen.current = active instanceof HTMLElement ? active : null;
+    (event.currentTarget as HTMLElement | null)?.focus({ preventScroll: true });
+  }
+
+  function onCloseAutoFocus(event: Event) {
+    event.preventDefault();
+    const element = focusBeforeOpen.current;
+    focusBeforeOpen.current = null;
+    if (element?.isConnected) element.focus({ preventScroll: true });
   }
 
   async function onUpdateClick() {
@@ -80,6 +100,8 @@ export function UpdateRequiredDialog() {
           onPointerDownOutside: (e: Event) => e.preventDefault(),
           onInteractOutside: (e: Event) => e.preventDefault(),
         } as Record<string, (e: Event) => void>)}
+        onOpenAutoFocus={onOpenAutoFocus}
+        onCloseAutoFocus={onCloseAutoFocus}
         data-testid="update-required-dialog"
       >
         <AlertDialogHeader>

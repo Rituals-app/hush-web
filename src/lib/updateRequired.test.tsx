@@ -9,7 +9,8 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 // Flush React's microtask queue so a freshly-mounted component has had a
 // chance to run its `useEffect` (e.g. to subscribe to the global update
@@ -35,8 +36,9 @@ import {
   isDismissibleReason,
   requestUpdate,
   setWaitingUpdateSW,
+  type UpdateRequiredDetail,
 } from "./updateRequired";
-import { foldUpdateRequired } from "../hooks/useUpdateRequired";
+import { foldUpdateRequired, useUpdateRequired } from "../hooks/useUpdateRequired";
 import { evaluateHandshakeCompatibility } from "./handshakeCompatibility";
 import { CLIENT_VERSION, isClientBelowMinimum } from "./clientVersion";
 import {
@@ -397,6 +399,234 @@ describe("UpdateRequiredDialog", () => {
   });
 });
 
+// Rituals fork (2026-11-06): the dialog opens by itself, often mid-typing. It
+// must not put focus on a button the next keystroke could press, and it gives
+// the text field its focus back when it closes.
+describe("UpdateRequiredDialog focus", () => {
+  const fields: HTMLInputElement[] = [];
+
+  /** A focused text field outside React, so a test can remove it. */
+  function focusedField(value = ""): HTMLInputElement {
+    const field = document.createElement("input");
+    field.value = value;
+    document.body.append(field);
+    fields.push(field);
+    field.focus();
+    return field;
+  }
+
+  async function raise(reason: UpdateRequiredDetail["reason"]) {
+    await act(async () => {
+      requestUpdate({ reason });
+    });
+    return screen.findByTestId("update-required-dialog");
+  }
+
+  async function openWhileTyping(reason: UpdateRequiredDetail["reason"], value = "") {
+    const field = focusedField(value);
+    render(<UpdateRequiredDialog />);
+    await flushEffects();
+    return { field, dialog: await raise(reason) };
+  }
+
+  const later = () => screen.getByRole("button", { name: "Later" });
+  const update = () => screen.getByRole("button", { name: "Update" });
+
+  async function closed() {
+    await waitFor(() => expect(screen.queryByTestId("update-required-dialog")).toBeNull());
+    // Radix hands focus back on a timer after the dialog has gone.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  afterEach(() => {
+    fields.splice(0).forEach((field) => field.remove());
+  });
+
+  it("sends the offer's focus to the dialog itself, and Tab reaches its buttons", async () => {
+    const user = userEvent.setup();
+    const { dialog } = await openWhileTyping("chunk-load-failed");
+
+    expect(document.activeElement).toBe(dialog);
+    expect(dialog).toHaveAttribute("tabindex", "-1");
+    expect(dialog).toHaveAttribute("role", "alertdialog");
+
+    await user.tab();
+    expect(document.activeElement).toBe(later());
+    await user.tab();
+    expect(document.activeElement).toBe(update());
+    await user.tab();
+    expect(document.activeElement).toBe(later());
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(update());
+  });
+
+  it("a keystroke meant for the text field presses nothing and types nothing", async () => {
+    const user = userEvent.setup();
+    const { field, dialog } = await openWhileTyping("chunk-load-failed", "half a thought");
+
+    for (const key of [" ", "{Enter}", "a"]) {
+      await user.keyboard(key);
+      expect(document.activeElement).toBe(dialog);
+      expect(dialog).toHaveAttribute("data-state", "open");
+      expect(update()).toBeEnabled();
+      expect(update()).toHaveTextContent("Update");
+    }
+    expect(field.value).toBe("half a thought");
+  });
+
+  it.each(["Later", "Escape"])("gives the text field its focus and caret back after %s", async (how) => {
+    const user = userEvent.setup();
+    const field = focusedField("half a thought");
+    field.setSelectionRange(4, 4);
+    render(<UpdateRequiredDialog />);
+    await flushEffects();
+    await raise("chunk-load-failed");
+    expect(document.activeElement).not.toBe(field);
+
+    if (how === "Later") await user.click(later());
+    else await user.keyboard("{Escape}");
+    await closed();
+
+    expect(document.activeElement).toBe(field);
+    expect([field.selectionStart, field.selectionEnd]).toEqual([4, 4]);
+    await user.keyboard("x");
+    expect(field.value).toBe("halfx a thought");
+  });
+
+  it("asks for focus only of a field that is still on the page", async () => {
+    const { field } = await openWhileTyping("chunk-load-failed");
+    const focus = vi.spyOn(field, "focus");
+    field.remove();
+
+    fireEvent.click(later());
+    await closed();
+
+    expect(focus).not.toHaveBeenCalled();
+  });
+
+  it("remembers the field anew each time the offer opens", async () => {
+    const { field } = await openWhileTyping("chunk-load-failed");
+    fireEvent.click(later());
+    await closed();
+    expect(document.activeElement).toBe(field);
+
+    const other = focusedField();
+    await raise("chunk-load-failed");
+    fireEvent.click(later());
+    await closed();
+
+    expect(document.activeElement).toBe(other);
+  });
+
+  it("a critical update takes focus from the field behind it, and not to Update", async () => {
+    const user = userEvent.setup();
+    const { field, dialog } = await openWhileTyping("api-426", "half a thought");
+
+    expect(document.activeElement).toBe(dialog);
+    for (const key of [" ", "{Enter}", "a"]) {
+      await user.keyboard(key);
+      expect(document.activeElement).toBe(dialog);
+      expect(update()).toBeEnabled();
+    }
+    expect(field.value).toBe("half a thought");
+
+    await user.tab();
+    expect(document.activeElement).toBe(update());
+  });
+
+  it("keeps focus in the dialog when a critical update replaces the offer while Later has it", async () => {
+    const user = userEvent.setup();
+    const { dialog } = await openWhileTyping("chunk-load-failed");
+    await user.tab();
+    expect(document.activeElement).toBe(later());
+
+    await raise("api-426");
+
+    expect(screen.queryByRole("button", { name: "Later" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(dialog));
+  });
+});
+
+// Rituals fork (2026-11-06): the dialog stays mounted while it animates out, so
+// the words on it must not change until it has gone.
+describe("UpdateRequiredDialog while it closes", () => {
+  /**
+   * jsdom runs no CSS animation, so the dialog would be removed at once. This
+   * reports the exit animation Radix waits for, as a browser's live styles do.
+   */
+  function animateClosing() {
+    const real = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) =>
+      new Proxy(real(element, pseudo), {
+        get: (styles, key) =>
+          key === "animationName"
+            ? (element as HTMLElement).dataset.state === "closed" ? "exit" : "none"
+            : Reflect.get(styles, key),
+      }),
+    );
+  }
+
+  it.each(["Later", "Escape"])("keeps the offer's words on screen while it animates out after %s", async (how) => {
+    animateClosing();
+    render(<UpdateRequiredDialog />);
+    await flushEffects();
+    await act(async () => {
+      requestUpdate({ reason: "chunk-load-failed" });
+    });
+    const dialog = await screen.findByTestId("update-required-dialog");
+
+    if (how === "Later") fireEvent.click(screen.getByTestId("update-required-later"));
+    else fireEvent.keyDown(dialog, { key: "Escape" });
+
+    await waitFor(() => expect(dialog).toHaveAttribute("data-state", "closed"));
+    expect(dialog).toHaveTextContent("Update ready");
+    expect(dialog).toHaveTextContent("A newer version of this space is ready.");
+    expect(dialog).not.toHaveTextContent(/update required|critical/i);
+    expect(screen.getByTestId("update-required-later")).toBeInTheDocument();
+  });
+});
+
+describe("useUpdateRequired", () => {
+  it("keeps the last reason when the person puts the offer off, and opens again on the next event", async () => {
+    const { result } = renderHook(() => useUpdateRequired());
+    await flushEffects();
+
+    act(() => requestUpdate({ reason: "chunk-load-failed" }));
+    expect(result.current).toMatchObject({ open: true, reason: "chunk-load-failed" });
+
+    act(() => result.current.dismiss());
+    expect(result.current).toMatchObject({ open: false, reason: "chunk-load-failed" });
+
+    act(() => requestUpdate({ reason: "chunk-load-failed" }));
+    expect(result.current).toMatchObject({ open: true, reason: "chunk-load-failed" });
+  });
+
+  it("opens as a critical update after an offer was put off", async () => {
+    const { result } = renderHook(() => useUpdateRequired());
+    await flushEffects();
+    act(() => requestUpdate({ reason: "chunk-load-failed" }));
+    act(() => result.current.dismiss());
+
+    act(() => requestUpdate({ reason: "api-426" }));
+    expect(result.current).toMatchObject({ open: true, reason: "api-426" });
+
+    // A critical one cannot be put off.
+    act(() => result.current.dismiss());
+    expect(result.current).toMatchObject({ open: true, reason: "api-426" });
+  });
+
+  it("does nothing when dismissed while closed", async () => {
+    const { result } = renderHook(() => useUpdateRequired());
+    await flushEffects();
+
+    act(() => result.current.dismiss());
+
+    expect(result.current).toMatchObject({ open: false, reason: null });
+  });
+});
+
 // Rituals fork (2026-11-06): which reasons may be put off, and how events fold.
 describe("dismissible reasons", () => {
   it("only the newer-build offer may be put off", () => {
@@ -428,6 +658,14 @@ describe("dismissible reasons", () => {
 
     // An event without a reason counts as critical.
     expect(foldUpdateRequired(offer, null)).toEqual({ open: true, reason: null });
+  });
+
+  it("a closed dialog opens with the new reason, whatever reason it last showed", () => {
+    const closedOffer = { open: false, reason: "chunk-load-failed" } as const;
+
+    expect(foldUpdateRequired(closedOffer, "chunk-load-failed")).toEqual({ open: true, reason: "chunk-load-failed" });
+    expect(foldUpdateRequired(closedOffer, "api-426")).toEqual({ open: true, reason: "api-426" });
+    expect(foldUpdateRequired(closedOffer, null)).toEqual({ open: true, reason: null });
   });
 });
 

@@ -11,7 +11,10 @@ type Reason = UpdateRequiredDetail["reason"] | null;
 interface UpdateRequiredState {
   /** True once any subsystem has raised the Update Required event. */
   open: boolean;
-  /** Reason of the event the dialog shows (for copy and telemetry). */
+  /**
+   * Reason of the event the dialog shows (for copy and telemetry). Kept after a
+   * close, because the dialog stays on screen while it animates out.
+   */
   reason: Reason;
 }
 
@@ -62,7 +65,7 @@ export function useUpdateRequired(): UseUpdateRequiredState {
   }, []);
 
   const dismiss = useCallback(() => {
-    setState((prev) => (prev.open && isDismissibleReason(prev.reason) ? CLOSED : prev));
+    setState((prev) => (prev.open && isDismissibleReason(prev.reason) ? { open: false, reason: prev.reason } : prev));
   }, []);
 
   return { ...state, dismiss };
