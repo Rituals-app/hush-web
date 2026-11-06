@@ -20,7 +20,7 @@
  * and to keep tests legible; the UI copy is generic and reason-agnostic.
  */
 export type UpdateRequiredReason =
-  | "sw-need-refresh" // vite-plugin-pwa needRefresh callback fired
+  | "sw-need-refresh" // a newer SW is waiting (the Rituals fork no longer raises this: see pwaUpdate.ts)
   | "min-client-version" // handshake.min_client_version > local app version
   | "ciphersuite-mismatch" // handshake.current_mls_ciphersuite !== client constant
   | "api-426" // server replied 426 Upgrade Required
