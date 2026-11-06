@@ -103,6 +103,13 @@ export async function ensureSpaceAccount(ticket) {
 }
 export const PHRASE_UNSAVED_KEY = 'rituals_space_phrase_unsaved';
 export const RITUALS_HOME_URL = 'https://rituals.app';
+/**
+ * The `member_kicked` reason the server sends when it retires this device's
+ * seat because the person opened the Space on another device (five device
+ * seats per person). The person is still in the Space; a revoke from the
+ * shared task carries no reason.
+ */
+export const RITUALS_KICK_DEVICE_LIMIT = 'device_limit';
 
 const TICKET_PREFIX = 'rt1.';
 const TICKET_MAX_LENGTH = 2048;
@@ -674,6 +681,18 @@ export function postToRitualsParent(message) {
   } catch {
     // The frame is closing; nothing to do.
   }
+}
+
+/**
+ * Tells the Rituals web client that this frame is showing a screen of its own
+ * that waits on the person (PIN unlock or setup, linking this device, a
+ * storage or switch notice), so the pane shows it at once instead of keeping
+ * it hidden until the parent's settle timer. Frame-only, via
+ * postToRitualsParent (exact parent origin); a no-op when not framed. Safe to
+ * repeat: the parent ignores it once the frame is shown.
+ */
+export function postRitualsFrameBusy() {
+  postToRitualsParent({ type: 'busy' });
 }
 
 /** False while the parent says the Space pane is hidden (`{type:"visible", visible:false}`). */

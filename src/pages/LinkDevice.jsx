@@ -26,7 +26,7 @@ import {
 } from '../lib/deviceLinking';
 import { downloadArchiveSession } from '../lib/linkArchiveSession';
 import { deleteArchive } from '../lib/linkArchiveTransport';
-import { SPACE_PATH, readSpaceTicket } from '../lib/ritualsSpace';
+import { SPACE_PATH, postRitualsFrameBusy, readSpaceTicket } from '../lib/ritualsSpace';
 
 const POLL_INITIAL_MS = 2000;
 const POLL_BACKOFF_MULTIPLIER = 1.5;
@@ -463,6 +463,11 @@ function ApproveLinkView({ initialPayload, unlockResumePath, homeInstanceUrl }) 
 
 export default function LinkDevice() {
   useBodyScrollMode(BODY_SCROLL_MODE.SCROLL);
+  // Rituals fork: in the Rituals pane linking waits on the person, so the
+  // pane shows this page at once (a no-op outside a frame).
+  useEffect(() => {
+    postRitualsFrameBusy();
+  }, []);
 
   const navigate = useNavigate();
   const location = useLocation();

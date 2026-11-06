@@ -6,7 +6,7 @@ import { useTextChannelMLSSubscriptions } from "@/hooks/useTextChannelMLSSubscri
 import { useServerModerationEvents } from "@/adapters/useServerModerationEvents"
 import { useServerJoinEvents } from "@/adapters/useServerJoinEvents"
 import { useLegacyPlaintextTagSweep } from "@/hooks/useLegacyPlaintextTagSweep"
-import { RITUALS_HOME_URL, isEmbedded } from "@/lib/ritualsSpace"
+import { RITUALS_HOME_URL, RITUALS_KICK_DEVICE_LIMIT, isEmbedded } from "@/lib/ritualsSpace"
 
 interface WsClientLike {
   on: (event: string, handler: (msg: unknown) => void) => void
@@ -92,7 +92,25 @@ export function PerServerListeners({
     refetchMembers,
     textChannelIds,
     onSelfRemoved: ({ event, reason }) => {
-      if (event === "kick" && !reason) {
+      if (event === "kick" && reason === RITUALS_KICK_DEVICE_LIMIT) {
+        // Rituals fork: the person opened this Space on a sixth device and the
+        // server retired this device's seat. They are still in the Space, so
+        // a calm note (not an error) and the way back; nothing is posted to
+        // the Rituals host here, so the hub and the native app never read
+        // this as a revoke. This device left the member list and its MLS
+        // groups, so the shell still routes it away from the Space view.
+        toast("This device left the space because you opened it on more devices.", {
+          description: "Open it again from Rituals to rejoin.",
+          action: isEmbedded()
+            ? undefined
+            : {
+                label: "Open Rituals",
+                onClick: () => {
+                  window.location.assign(RITUALS_HOME_URL)
+                },
+              },
+        })
+      } else if (event === "kick" && !reason) {
         // Rituals fork: a removal from the shared task in Rituals arrives
         // as a kick with no reason (signed sync). Say what happened and,
         // in a normal browser tab, offer the way back to Rituals (the

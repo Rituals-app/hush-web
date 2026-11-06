@@ -23,6 +23,7 @@ import {
   RITUALS_HOME_URL,
   SPACE_SOURCE_LINKS,
   isEmbedded,
+  postRitualsFrameBusy,
 } from "@/lib/ritualsSpace"
 import { BODY_SCROLL_MODE, useBodyScrollMode } from "@/hooks/useBodyScrollMode"
 import { generateIdentityMnemonic } from "@/lib/bip39Identity"
@@ -71,6 +72,11 @@ export function AuthFlow({
 }: AuthFlowProps) {
   const [view, setView] = React.useState<AuthView>("main")
   useBodyScrollMode(BODY_SCROLL_MODE.SCROLL)
+  // Rituals fork: in the Rituals pane the sign-in and link-this-device
+  // screens wait on the person, so the pane shows them at once.
+  React.useEffect(() => {
+    postRitualsFrameBusy()
+  }, [])
 
   return (
     <div className="flex min-h-svh w-full flex-col bg-background px-4 py-4 sm:px-6">

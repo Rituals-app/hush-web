@@ -24,6 +24,7 @@ import { PinOtp, PIN_LENGTH } from "@/components/auth/pin-otp"
 import { useAuth } from "@/contexts/AuthContext"
 import { loadPinAttempts } from "@/hooks/useAuth"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { postRitualsFrameBusy } from "@/lib/ritualsSpace"
 import {
   formatUserLabel,
   getUserDisplayName,
@@ -81,6 +82,12 @@ export function PinUnlockPanel({ onSwitchAccount }: PinUnlockPanelProps) {
   const username = formatUserLabel({ username: user?.username, fallback: "" })
   const label = display || username || "your account"
   const initial = ((display || username || "?").charAt(0) ?? "?").toUpperCase()
+
+  // Rituals fork: in the Rituals pane this screen waits on the person, so the
+  // pane shows it at once (a no-op outside a frame).
+  React.useEffect(() => {
+    postRitualsFrameBusy()
+  }, [])
 
   React.useEffect(
     () => () => {

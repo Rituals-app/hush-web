@@ -5,6 +5,7 @@ import {
   RITUALS_PARENT_ORIGIN,
   handleRitualsParentMessage,
   isFrameVisible,
+  postRitualsFrameBusy,
   resolveRitualsParentOrigin,
 } from './ritualsSpace.js';
 
@@ -66,6 +67,25 @@ describe('handleRitualsParentMessage', () => {
     expect(onKey).toHaveBeenCalledTimes(1);
     expect(onKey.mock.calls[0][0].key).toBe('Escape');
     document.removeEventListener('keydown', onKey);
+  });
+});
+
+describe('postRitualsFrameBusy', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+  it('posts nothing outside a frame', () => {
+    const post = vi.spyOn(window, 'postMessage');
+    postRitualsFrameBusy();
+    expect(post).not.toHaveBeenCalled();
+  });
+  it('posts busy to the parent, at the Rituals origin only, when framed', () => {
+    const parentPost = vi.fn();
+    vi.spyOn(window, 'top', 'get').mockReturnValue({});
+    vi.spyOn(window, 'parent', 'get').mockReturnValue({ postMessage: parentPost });
+    postRitualsFrameBusy();
+    expect(parentPost).toHaveBeenCalledTimes(1);
+    expect(parentPost).toHaveBeenCalledWith({ type: 'busy' }, RITUALS_PARENT_ORIGIN);
   });
 });
 
