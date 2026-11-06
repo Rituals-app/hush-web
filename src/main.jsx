@@ -112,6 +112,9 @@ async function recoverFromFailedLoad(framed) {
     showNotice(ASK_FIRST.get(outcome), updateButton(), framed);
     return;
   }
+  // No app runs behind this notice, so loading again loses nothing. 'online'
+  // fires only when the connection comes back, so this cannot loop.
+  window.addEventListener('online', () => window.location.reload(), { once: true });
   showNotice('This space could not load. Check your connection, then try again.', retryButton(), framed);
 }
 

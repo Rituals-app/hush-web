@@ -191,12 +191,17 @@ function track<T>(promise: Promise<T>) {
   return box;
 }
 
+/** The host's answer to the boot step's connection check. */
+let hostProbe: ReturnType<typeof vi.fn>;
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
   window.sessionStorage.clear();
   diagnostics = [];
   window.addEventListener("hush:diagnostic", onDiagnostic);
+  hostProbe = vi.fn(() => Promise.resolve({ ok: true }));
+  vi.stubGlobal("fetch", hostProbe);
 });
 
 afterEach(() => {
@@ -204,8 +209,10 @@ afterEach(() => {
   loaded = null;
   delete (navigator as unknown as { serviceWorker?: unknown }).serviceWorker;
   delete (navigator as unknown as { locks?: unknown }).locks;
+  delete (navigator as unknown as { onLine?: unknown }).onLine;
   delete (window as unknown as { hushDesktop?: unknown }).hushDesktop;
   window.sessionStorage.clear();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -505,6 +512,170 @@ describe("applyWaitingBuildAtStart({ awaitInstall }): a page whose build failed 
 
     expect(outcome).toBe("none-waiting");
     expect(registration.update).not.toHaveBeenCalled();
+  });
+});
+
+// The newer build's main files are not in the precache, so loading it takes the
+// network. A start that cannot reach the host keeps the current build and leaves
+// the waiting one for a later start.
+describe("a start that cannot reach the host (offline)", () => {
+  const goOffline = () => Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
+
+  /** A request that never answers and rejects when aborted, as fetch does. */
+  const neverAnswers = (_url: string, init: RequestInit) =>
+    new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    });
+
+  it("keeps the current build when the browser reports no connection, without asking the host", async () => {
+    const { waiting, locks } = installEnvironment();
+    goOffline();
+
+    const { outcome, reload } = await runToEnd();
+
+    expect(outcome).toBe("offline");
+    expect(hostProbe).not.toHaveBeenCalled();
+    expect(waiting!.postMessage).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem(loaded!.QUIET_UPDATE_STORAGE_KEY)).toBeNull();
+    // The page still announces itself to the other Space pages.
+    expect(locks.request).toHaveBeenCalledOnce();
+  });
+
+  it.each<[string, () => unknown]>([
+    ["the request fails", () => Promise.reject(new TypeError("Failed to fetch"))],
+    ["the host answers with an error", () => Promise.resolve({ ok: false, status: 503 })],
+    ["the request cannot start", () => { throw new TypeError("Blocked"); }],
+  ])("keeps the current build when %s, though the browser reports a connection", async (_label, answer) => {
+    const { waiting } = installEnvironment();
+    hostProbe.mockImplementation(answer);
+
+    const { outcome, reload } = await runToEnd();
+
+    expect(outcome).toBe("offline");
+    expect(hostProbe).toHaveBeenCalledOnce();
+    expect(waiting!.postMessage).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem(loaded!.QUIET_UPDATE_STORAGE_KEY)).toBeNull();
+  });
+
+  it("waits at most QUIET_UPDATE_PROBE_TIMEOUT_MS for the host, then cancels the request", async () => {
+    const { waiting } = installEnvironment();
+    hostProbe.mockImplementation(neverAnswers);
+    const { applyWaitingBuildAtStart, QUIET_UPDATE_PROBE_TIMEOUT_MS } = await importFresh();
+    expect(QUIET_UPDATE_PROBE_TIMEOUT_MS).toBe(1_500);
+    const reload = vi.fn();
+
+    const result = track(applyWaitingBuildAtStart({ reload }));
+    await vi.advanceTimersByTimeAsync(QUIET_UPDATE_PROBE_TIMEOUT_MS - 1);
+    const { signal } = hostProbe.mock.calls[0]?.[1] as RequestInit;
+    expect(result.value).toBeUndefined();
+    expect(signal?.aborted).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(result.value).toBe("offline");
+    expect(signal?.aborted).toBe(true);
+    expect(waiting!.postMessage).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("asks this origin for sw.js past the HTTP cache, and applies the build when the host answers", async () => {
+    const { waiting } = installEnvironment();
+
+    const { outcome, reload } = await runToEnd();
+
+    expect(hostProbe).toHaveBeenCalledOnce();
+    const [url, init] = hostProbe.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/sw.js");
+    expect(init).toMatchObject({ cache: "no-store", mode: "same-origin" });
+    // Its body is never read.
+    expect(init.signal?.aborted).toBe(true);
+    expect(outcome).toBe("applied");
+    expect(waiting!.postMessage).toHaveBeenCalledOnce();
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it.each<[string, FakeEnv]>([
+    ["none-waiting", { waiting: false }],
+    ["no-registration", { registration: "none" }],
+    ["uncontrolled", { controlled: false }],
+  ])("pays nothing when no waiting build could be applied (%s)", async (expected, env) => {
+    installEnvironment(env);
+
+    const { outcome } = await runToEnd();
+
+    expect(outcome).toBe(expected);
+    expect(hostProbe).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, FakeEnv]>([
+    ["other-pages", { otherHeld: 1 }],
+    ["no-locks", { locks: false }],
+    ["lock-late", { grant: "never" }],
+  ])("comes before the checks that would offer Update (%s)", async (online, env) => {
+    installEnvironment(env);
+    expect((await runToEnd()).outcome).toBe(online);
+
+    goOffline();
+    expect((await runToEnd()).outcome).toBe("offline");
+  });
+
+  it("tells a page whose build failed to load too, and does not activate the build", async () => {
+    const { waiting } = installEnvironment();
+    goOffline();
+    const { applyWaitingBuildAtStart } = await importFresh();
+    const reload = vi.fn();
+
+    const outcome = await applyWaitingBuildAtStart({ awaitInstall: true, reload });
+
+    expect(outcome).toBe("offline");
+    expect(waiting!.postMessage).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("checks a build that finishes installing while the failed page waits", async () => {
+    const { finishInstall } = installEnvironment({ waiting: false, installing: true });
+    hostProbe.mockImplementation(() => Promise.reject(new TypeError("Failed to fetch")));
+    const { applyWaitingBuildAtStart } = await importFresh();
+    const reload = vi.fn();
+
+    const result = track(applyWaitingBuildAtStart({ awaitInstall: true, reload }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    const worker = finishInstall();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(result.value).toBe("offline");
+    expect(worker.postMessage).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("records the outcome with the other boot outcomes", async () => {
+    installEnvironment();
+    goOffline();
+    const { outcome } = await runToEnd();
+
+    // Nothing reaches the diagnostic log before it listens.
+    expect(recordedOutcomes()).toEqual([]);
+    expect(bootOutcomes()).toEqual([outcome]);
+    expect(outcome).toBe("offline");
+  });
+
+  it("leaves the waiting build for a later start, which applies it once the host answers", async () => {
+    const first = installEnvironment();
+    goOffline();
+    expect((await runToEnd()).outcome).toBe("offline");
+    expect(first.waiting!.postMessage).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem(loaded!.QUIET_UPDATE_STORAGE_KEY)).toBeNull();
+
+    // The next start: that page's lock has gone with it, the tab's storage has not.
+    delete (navigator as unknown as { onLine?: unknown }).onLine;
+    const { waiting } = installEnvironment();
+    const later = await runToEnd();
+
+    expect(later.outcome).toBe("applied");
+    expect(waiting!.postMessage).toHaveBeenCalledOnce();
+    expect(later.reload).toHaveBeenCalledOnce();
+    expect(window.sessionStorage.getItem(loaded!.QUIET_UPDATE_STORAGE_KEY)).toBe(String(NOW + 10_000));
   });
 });
 

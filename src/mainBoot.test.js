@@ -82,13 +82,26 @@ async function boot(setup, settled) {
 const lastCall = (name) => () => expect(calls.at(-1)).toBe(name);
 const showsNotice = (text) => () => expect(notice()).toBe(text);
 
+/** Stands in for window.location.reload; afterEach puts the real one back. */
+function stubReload() {
+  const reload = vi.fn();
+  vi.stubGlobal('location', { ...window.location, reload });
+  return reload;
+}
+
+const connectionReturns = () => window.dispatchEvent(new Event('online'));
+
 afterEach(() => {
+  // A retry notice from this test may still be listening: it listens once.
+  stubReload();
+  connectionReturns();
+  vi.unstubAllGlobals();
   document.body.innerHTML = '';
   vi.restoreAllMocks();
 });
 
 describe('boot order (src/main.jsx)', () => {
-  it.each(['none-waiting', 'other-pages', 'recent', 'error', 'no-locks', 'uncontrolled'])(
+  it.each(['none-waiting', 'other-pages', 'recent', 'error', 'no-locks', 'uncontrolled', 'offline'])(
     'runs the update step first, then boots the app (%s)',
     async (outcome) => {
       expect(await boot({ outcomes: [outcome] }, lastCall('app'))).toEqual(['frame-host', 'quiet', 'ticket', 'account', 'app']);
@@ -176,7 +189,7 @@ describe('when the app module fails to load (src/main.jsx)', () => {
     }
   });
 
-  it.each(['none-waiting', 'uncontrolled', 'recent', 'no-registration', 'post-failed', 'error'])(
+  it.each(['none-waiting', 'uncontrolled', 'recent', 'no-registration', 'post-failed', 'error', 'offline'])(
     'offers a retry when no newer build can be loaded (%s)',
     async (outcome) => {
       const order = await boot({ outcomes: ['none-waiting', outcome], appError: chunkError() }, showsNotice(RETRY));
@@ -185,6 +198,40 @@ describe('when the app module fails to load (src/main.jsx)', () => {
       expect(noticeButton()?.textContent).toBe('Try again');
     },
   );
+
+  it('loads again by itself, once, when the connection returns to the retry notice', async () => {
+    const reload = stubReload();
+    await boot({ outcomes: ['offline', 'offline'], appError: chunkError() }, showsNotice(RETRY));
+    expect(reload).not.toHaveBeenCalled();
+
+    connectionReturns();
+    connectionReturns();
+
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it('never reloads a page whose app is running when the connection returns', async () => {
+    const reload = stubReload();
+    await boot({ outcomes: ['offline'] }, lastCall('app'));
+
+    connectionReturns();
+
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the app module threw', { outcomes: ['none-waiting'], appError: new Error('boom') }, BROKEN],
+    ['a newer build asks first', { outcomes: ['none-waiting', 'other-pages'], appError: chunkError() }, ASK_OTHER_PAGES],
+  ])('leaves it to the person when the connection returns and %s', async (_label, setup, copy) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const reload = stubReload();
+    await boot(setup, showsNotice(copy));
+
+    connectionReturns();
+
+    expect(reload).not.toHaveBeenCalled();
+    expect(notice()).toBe(copy);
+  });
 
   it.each([
     ['Firefox', new TypeError('error loading dynamically imported module: https://space.example.test/assets/appMain-old.js')],

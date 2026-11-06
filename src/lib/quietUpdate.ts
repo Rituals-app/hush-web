@@ -19,11 +19,15 @@
 //     for its lifetime, and the lock list tells a page whether it is alone.
 //     Without the Web Locks API, or when the lock is not granted in time,
 //     nothing is applied;
+//   * the host answers. The newer build's main files are not in the precache,
+//     so reloading into it without a connection ends on the retry notice in
+//     src/main.jsx. canReachHost() asks only when a build is waiting, so other
+//     boots pay nothing;
 //   * a reload loop is impossible: at most one attempt per tab every
 //     QUIET_UPDATE_RETRY_MS, and none when that guard cannot be stored.
 // Otherwise the page boots its current, compatible build. The waiting worker
 // takes over once every page using the old one has closed, or at a later
-// boot that finds this page alone.
+// boot that finds this page alone with the host in reach.
 //
 // Two cases reload without the alone check, because this page is already
 // broken and its old build can no longer load:
@@ -63,6 +67,9 @@ export const QUIET_UPDATE_ACTIVATE_TIMEOUT_MS = 5_000;
 /** How long a page whose build failed to load waits for a newer build to finish installing. */
 export const QUIET_UPDATE_INSTALL_TIMEOUT_MS = 15_000;
 
+/** How long boot waits for the host to answer before leaving a waiting build for later. */
+export const QUIET_UPDATE_PROBE_TIMEOUT_MS = 1_500;
+
 export type QuietUpdateOutcome =
   | "applied"
   | "taken-over"
@@ -70,6 +77,7 @@ export type QuietUpdateOutcome =
   | "no-registration"
   | "none-waiting"
   | "uncontrolled"
+  | "offline"
   | "no-locks"
   | "lock-late"
   | "other-pages"
@@ -292,6 +300,27 @@ function waitForInstalledBuild(registration: ServiceWorkerRegistration, ms: numb
   });
 }
 
+/**
+ * Whether the host answers now. sw.js is not in the precache and is not a
+ * navigation, so the worker passes this request to the network; it is the one
+ * file the host must serve for any update to exist. A redirect off this origin
+ * (a captive portal) or any error answer counts as no.
+ */
+async function canReachHost(): Promise<boolean> {
+  if (navigator.onLine === false) return false;
+  const request = new AbortController();
+  try {
+    const answer = fetch("/sw.js", { cache: "no-store", mode: "same-origin", signal: request.signal })
+      .then((response) => response.ok);
+    return await withTimeout(answer, QUIET_UPDATE_PROBE_TIMEOUT_MS, false);
+  } catch {
+    return false;
+  } finally {
+    // Nothing reads the body.
+    request.abort();
+  }
+}
+
 type Decision =
   | { outcome: Exclude<QuietUpdateOutcome, "applied" | "post-failed" | "error"> }
   | { outcome: "applied"; waiting: ServiceWorker; container: ServiceWorkerContainer };
@@ -320,6 +349,10 @@ async function decideAtStart(options: QuietUpdateOptions): Promise<Decision> {
   if (controllerChangedSinceBoot()) return takenOver();
   if (!waiting) return { outcome: "none-waiting" };
   if (!container.controller) return { outcome: "uncontrolled" };
+  // The worker stays waiting and the retry window stays unclaimed, so a later
+  // start applies it. It also comes before the outcomes that offer Update: a
+  // build that cannot load is not worth offering.
+  if (!(await canReachHost())) return { outcome: "offline" };
 
   if (!hasLocks) return { outcome: "no-locks" };
   if (!(await withTimeout(granted, QUIET_UPDATE_STEP_TIMEOUT_MS, false))) return { outcome: "lock-late" };
