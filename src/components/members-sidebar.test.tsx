@@ -155,6 +155,22 @@ describe("MembersSidebar", () => {
     expect(screen.getByText(/remove from space/i)).toBeInTheDocument()
   })
 
+  it("hides kick on a Space member row (one with a person key)", async () => {
+    setup({
+      currentUserRole: "owner",
+      onKickMember: vi.fn(),
+      members: [{ ...MOD, personKey: "pk-mod" }],
+    })
+
+    const u = userEvent.setup()
+    await u.pointer({
+      keys: "[MouseRight]",
+      target: screen.getByText("Mod"),
+    })
+
+    expect(screen.queryByText(/remove from space/i)).not.toBeInTheDocument()
+  })
+
   it("hides kick on the owner row regardless of actor", async () => {
     setup({ currentUserRole: "owner", onKickMember: vi.fn() })
 

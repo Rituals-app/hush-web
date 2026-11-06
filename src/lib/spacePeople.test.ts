@@ -25,15 +25,44 @@ describe("spacePeople", () => {
     expect(onePerPerson(list, "a")).toEqual(list)
   })
 
-  it("keeps one row per person with the highest role and this device's row", () => {
+  it("names a person from the latest-joined device and keeps list position", () => {
     const list = unifyPeople([
-      row({ id: "a1", personKey: "k", role: "owner", displayName: "Ann", name: "Ann", joinedAt: "2026-01-01" }),
-      row({ id: "a2", personKey: "k", role: "member", name: "ann-2", joinedAt: "2026-02-01" }),
-      row({ id: "c", role: "admin" }),
+      row({ id: "a1", personKey: "k", displayName: "Ann", name: "Ann", joinedAt: "2026-01-01" }),
+      row({ id: "c" }),
+      row({ id: "a2", personKey: "k", displayName: "Ann R", name: "Ann R", joinedAt: "2026-02-01" }),
     ])
-    const people = onePerPerson(list, "a2")
+    expect(list.map((m) => [m.id, m.name, m.username])).toEqual([
+      ["a1", "Ann R", null],
+      ["c", "c", "c"],
+      ["a2", "Ann R", null],
+    ])
+    expect(onePerPerson(list, "c").map((m) => m.id)).toEqual(["a2", "c"])
+  })
+
+  it("targets another person's online device, else their latest device, with the highest role", () => {
+    const seats = [
+      row({ id: "b1", personKey: "b", role: "admin", joinedAt: "2026-01-01", presence: "online" }),
+      row({ id: "b2", personKey: "b", role: "member", joinedAt: "2026-02-01" }),
+      row({ id: "b3", personKey: "b", role: "member", joinedAt: "2026-03-01" }),
+    ]
+    // b1 is online: it is the target even though it is the oldest.
+    expect(onePerPerson(seats, "me")[0]).toMatchObject({ id: "b1", role: "admin" })
+    // Nobody online: the latest-joined device, still the highest role.
+    const offline = seats.map((m) => ({ ...m, presence: "offline" as const }))
+    expect(onePerPerson(offline, "me")).toEqual([
+      expect.objectContaining({ id: "b3", role: "admin" }),
+    ])
+  })
+
+  it("keeps this device's own row and role for my own person", () => {
+    const seats = [
+      row({ id: "a1", personKey: "k", role: "owner", joinedAt: "2026-01-01", presence: "online" }),
+      row({ id: "a2", personKey: "k", role: "member", joinedAt: "2026-02-01" }),
+      row({ id: "c", role: "admin" }),
+    ]
+    const people = onePerPerson(unifyPeople(seats), "a2")
     expect(people).toHaveLength(2)
-    expect(people[0]).toMatchObject({ id: "a2", name: "Ann", role: "owner", username: null })
+    expect(people[0]).toMatchObject({ id: "a2", role: "member", username: null })
     expect(people[1].id).toBe("c")
   })
 

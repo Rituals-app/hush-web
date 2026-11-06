@@ -16,24 +16,19 @@ const ROLE_RANK: Record<MemberRole, number> = {
   owner: 4,
 }
 
-function canonicalFirst(a: ServerMember, b: ServerMember): number {
+/** Latest joinedAt first (rows without one last), then id. */
+function latestFirst(a: ServerMember, b: ServerMember): number {
   const at = a.joinedAt ?? ""
   const bt = b.joinedAt ?? ""
   if (at !== bt) {
     if (!at) return 1
     if (!bt) return -1
-    return at < bt ? -1 : 1
+    return at > bt ? -1 : 1
   }
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
-/**
- * Every row of a person takes the name of that person's first device
- * that has a display name (earliest joinedAt, then id), with no username (the per-device handle
- * suffix is not shown), and is online when any of the devices is online.
- * Order and count are kept, so per-device lookups by id still work.
- */
-export function unifyPeople(members: ServerMember[]): ServerMember[] {
+function groupByPerson(members: ServerMember[]): Map<string, ServerMember[]> {
   const groups = new Map<string, ServerMember[]>()
   for (const m of members) {
     if (!m.personKey) continue
@@ -41,18 +36,30 @@ export function unifyPeople(members: ServerMember[]): ServerMember[] {
     if (list) list.push(m)
     else groups.set(m.personKey, [m])
   }
+  return groups
+}
+
+/**
+ * Every row of a person takes the name of that person's latest-joined
+ * device that has a display name (so a rename shows up), with no username
+ * (the per-device handle suffix is not shown), and is online when any of
+ * the devices is online. Order and count are kept, so per-device lookups
+ * by id still work.
+ */
+export function unifyPeople(members: ServerMember[]): ServerMember[] {
+  const groups = groupByPerson(members)
   if (groups.size === 0) return members
   const shared = new Map<string, Pick<ServerMember, "name" | "initials" | "displayName" | "presence">>()
   for (const [key, list] of groups) {
-    const sorted = [...list].sort(canonicalFirst)
-    const canonical = sorted.find((m) => m.displayName) ?? sorted[0]
+    const sorted = [...list].sort(latestFirst)
+    const named = sorted.find((m) => m.displayName) ?? sorted[0]
     const presence = list.some((m) => m.presence === "online")
       ? "online"
-      : canonical.presence
+      : named.presence
     shared.set(key, {
-      name: canonical.name,
-      initials: canonical.initials,
-      displayName: canonical.displayName,
+      name: named.name,
+      initials: named.initials,
+      displayName: named.displayName,
       presence,
     })
   }
@@ -63,31 +70,41 @@ export function unifyPeople(members: ServerMember[]): ServerMember[] {
 }
 
 /**
- * One row per person for lists and counts. The kept row is this device's
- * own row when it belongs to the person, else the first row in list order;
- * it carries the highest role among the person's devices.
+ * One row per person for lists and counts, at the person's first position
+ * in list order. My own person is this device's row with this device's
+ * role (it matches what this device may do). For other people the row is
+ * an online device if any (latest joined first), else the latest-joined
+ * device, so Message and other actions reach a live device; it shows the
+ * highest role among the person's devices.
  */
 export function onePerPerson(
   members: ServerMember[],
   currentUserId: string | null
 ): ServerMember[] {
-  const kept = new Map<string, number>()
+  const groups = groupByPerson(members)
+  if (groups.size === 0) return members
+  const emitted = new Set<string>()
   const out: ServerMember[] = []
   for (const m of members) {
     if (!m.personKey) {
       out.push(m)
       continue
     }
-    const at = kept.get(m.personKey)
-    if (at === undefined) {
-      kept.set(m.personKey, out.length)
-      out.push(m)
+    if (emitted.has(m.personKey)) continue
+    emitted.add(m.personKey)
+    const list = groups.get(m.personKey) ?? [m]
+    const mine = list.find((x) => x.id === currentUserId)
+    if (mine) {
+      out.push(mine)
       continue
     }
-    const prev = out[at]
-    const role = ROLE_RANK[m.role] > ROLE_RANK[prev.role] ? m.role : prev.role
-    const base = m.id === currentUserId ? m : prev
-    out[at] = { ...base, role }
+    const sorted = [...list].sort(latestFirst)
+    const target = sorted.find((x) => x.presence === "online") ?? sorted[0]
+    const role = list.reduce(
+      (best, x) => (ROLE_RANK[x.role] > ROLE_RANK[best] ? x.role : best),
+      target.role
+    )
+    out.push({ ...target, role })
   }
   return out
 }

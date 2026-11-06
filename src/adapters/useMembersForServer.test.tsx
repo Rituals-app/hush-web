@@ -236,8 +236,8 @@ describe("useMembersForServer", () => {
 
     await waitFor(() => expect(result.current.members).toHaveLength(3))
     const [a2, a1, b1] = result.current.members
-    // The first device names the person; no per-device handle; online if any device is.
-    expect([a2.name, a1.name]).toEqual(["Alice M", "Alice M"])
+    // The latest-joined device names the person; no per-device handle; online if any device is.
+    expect([a2.name, a1.name]).toEqual(["Alice", "Alice"])
     expect([a2.username, a1.username]).toEqual([null, null])
     expect([a2.presence, a1.presence]).toEqual(["online", "online"])
     expect(a1.personKey).toBe("pk-a")

@@ -60,6 +60,8 @@ export interface ServerMember {
   createdAt?: string | null
   joinedAt?: string | null
   homeInstance?: string | null
+  /** Rituals fork: set on Space members; Rituals owns their membership. */
+  personKey?: string | null
 }
 
 interface MembersSidebarProps {
@@ -203,7 +205,12 @@ function MemberRow({
   const [kickReason, setKickReason] = React.useState("")
   const [kickBusy, setKickBusy] = React.useState(false)
   const [kickError, setKickError] = React.useState<string | null>(null)
-  const showKick = canKick(currentUserRole, member.role) && Boolean(onKickMember)
+  // Rituals fork: no in-frame kick for Space members; removal goes through
+  // Rituals (a kick would drop one device and the next open undoes it).
+  const showKick =
+    canKick(currentUserRole, member.role) &&
+    Boolean(onKickMember) &&
+    !member.personKey
 
   const confirmKick = React.useCallback(async () => {
     const reason = kickReason.trim()
