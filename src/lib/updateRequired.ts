@@ -18,7 +18,8 @@
 /**
  * Reason codes for surfacing the Update Required dialog. Used for telemetry
  * and to keep tests legible. The UI copy is generic, except for
- * "chunk-load-failed", which is not an incompatibility (UpdateRequiredDialog).
+ * "chunk-load-failed", which is not an incompatibility: the person may put it
+ * off (isDismissibleReason, UpdateRequiredDialog).
  */
 export type UpdateRequiredReason =
   | "sw-need-refresh" // a newer SW is waiting (the Rituals fork no longer raises this: see pwaUpdate.ts)
@@ -28,6 +29,16 @@ export type UpdateRequiredReason =
   | "api-mls-ciphersuite-mismatch" // server replied with mls_ciphersuite_mismatch error
   | "api-compat-error" // generic compatibility error from server (extension hook)
   | "chunk-load-failed"; // Rituals fork: part of this build failed to load and a newer build is ready (chunkRecovery.ts)
+
+/**
+ * Rituals fork: true for a reason the person may put off. Only
+ * "chunk-load-failed" (a newer build is ready; this one keeps working unless
+ * another of its files fails to load). Every critical reason, and an unknown
+ * one, stays non-dismissible.
+ */
+export function isDismissibleReason(reason: UpdateRequiredReason | null | undefined): boolean {
+  return reason === "chunk-load-failed";
+}
 
 export interface UpdateRequiredDetail {
   /** Reason the dialog was raised. */
@@ -52,7 +63,14 @@ export const UPDATE_REQUIRED_EVENT = "hush:update-required";
  *   2. The callback is set once per session by the SW register and is
  *      reused for every Update click.
  */
-let waitingUpdateSW: (() => Promise<void>) | null = null;
+/**
+ * Activates the waiting Service Worker. Rituals fork: resolving `false` says
+ * nothing was waiting (for example another page already activated it), so
+ * applyUpdate reloads at once instead of waiting for a controller change.
+ */
+export type WaitingUpdateSW = () => Promise<void | boolean>;
+
+let waitingUpdateSW: WaitingUpdateSW | null = null;
 
 /**
  * Set the function that activates the waiting Service Worker. Called by
@@ -60,7 +78,7 @@ let waitingUpdateSW: (() => Promise<void>) | null = null;
  *
  * Pass null to clear (test cleanup).
  */
-export function setWaitingUpdateSW(fn: (() => Promise<void>) | null): void {
+export function setWaitingUpdateSW(fn: WaitingUpdateSW | null): void {
   waitingUpdateSW = fn;
 }
 
@@ -68,7 +86,7 @@ export function setWaitingUpdateSW(fn: (() => Promise<void>) | null): void {
  * Returns the currently registered SW updater, or null when no SW is
  * waiting. Exposed for the dialog action and tests.
  */
-export function getWaitingUpdateSW(): (() => Promise<void>) | null {
+export function getWaitingUpdateSW(): WaitingUpdateSW | null {
   return waitingUpdateSW;
 }
 
@@ -92,7 +110,8 @@ export function requestUpdate(detail: UpdateRequiredDetail): void {
  *   1. If a waiting SW updater is registered, call it. It resolves once
  *      `skipWaiting` has been acknowledged. We then wait for the SW
  *      `controllerchange` event (or a short timeout) before reloading so
- *      the new bundle is the one served to the next navigation.
+ *      the new bundle is the one served to the next navigation. An updater
+ *      that resolves `false` had nothing to activate: reload at once.
  *   2. Otherwise fall back to a plain reload. Cache cleanup is owned by
  *      Workbox on SW activation; this module never loops over Cache API
  *      entries and never touches IndexedDB or localStorage.
@@ -151,13 +170,15 @@ export async function applyUpdate(
       setTimeout(resolve, timeoutMs),
     );
 
+    let activated: void | boolean = undefined;
     try {
-      await updater();
+      activated = await updater();
     } catch {
       // Even if the updater throws (e.g. SW already gone), continue to
       // the reload path — a fresh load fixes most stuck states.
     }
-    await Promise.race([controllerChangePromise, timeoutPromise]);
+    // Rituals fork: nothing was waiting, so no controller change will come.
+    if (activated !== false) await Promise.race([controllerChangePromise, timeoutPromise]);
     safeReload();
     return;
   }

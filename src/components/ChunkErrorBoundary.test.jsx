@@ -5,6 +5,8 @@ import { cleanup, render, screen } from '@testing-library/react';
 // Rituals fork (2026-11-06): src/components/ChunkErrorBoundary.jsx.
 const recovery = vi.hoisted(() => ({ offerNewerBuild: vi.fn(async () => true) }));
 vi.mock('@/lib/chunkRecovery', () => recovery);
+const space = vi.hoisted(() => ({ postRitualsFrameBusy: vi.fn() }));
+vi.mock('@/lib/ritualsSpace', () => space);
 
 import ChunkErrorBoundary from './ChunkErrorBoundary';
 
@@ -31,6 +33,7 @@ beforeEach(() => {
   // React logs every caught render error.
   vi.spyOn(console, 'error').mockImplementation(() => {});
   recovery.offerNewerBuild.mockClear();
+  space.postRitualsFrameBusy.mockClear();
 });
 
 afterEach(() => {
@@ -47,7 +50,7 @@ describe('ChunkErrorBoundary', () => {
     expect(screen.queryByTestId('chunk-error-fallback')).toBeNull();
   });
 
-  it('shows a retry and offers a newer build when a screen failed to load', () => {
+  it('shows a retry, shows the Rituals pane and offers a newer build when a screen failed to load', () => {
     const failed = new TypeError('Failed to fetch dynamically imported module: https://space.example.test/assets/Settings-old.js');
 
     render(<Outer><ChunkErrorBoundary><Throws error={failed} /></ChunkErrorBoundary></Outer>);
@@ -56,6 +59,8 @@ describe('ChunkErrorBoundary', () => {
     expect(screen.getByText('This space could not load. Check your connection, then try again.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
     expect(screen.queryByTestId('outer')).toBeNull();
+    // The screen that would report ready did not load: the pane shows at once.
+    expect(space.postRitualsFrameBusy).toHaveBeenCalledOnce();
     expect(recovery.offerNewerBuild).toHaveBeenCalledOnce();
   });
 
@@ -78,5 +83,6 @@ describe('ChunkErrorBoundary', () => {
     expect(screen.getByTestId('outer')).toHaveTextContent('boom');
     expect(screen.queryByTestId('chunk-error-fallback')).toBeNull();
     expect(recovery.offerNewerBuild).not.toHaveBeenCalled();
+    expect(space.postRitualsFrameBusy).not.toHaveBeenCalled();
   });
 });

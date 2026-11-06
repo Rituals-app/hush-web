@@ -9,7 +9,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, fireEvent } from "@testing-library/react";
+import { act, cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 // Flush React's microtask queue so a freshly-mounted component has had a
 // chance to run its `useEffect` (e.g. to subscribe to the global update
@@ -32,9 +32,11 @@ import {
   UPDATE_REQUIRED_EVENT,
   applyUpdate,
   getWaitingUpdateSW,
+  isDismissibleReason,
   requestUpdate,
   setWaitingUpdateSW,
 } from "./updateRequired";
+import { foldUpdateRequired } from "../hooks/useUpdateRequired";
 import { evaluateHandshakeCompatibility } from "./handshakeCompatibility";
 import { CLIENT_VERSION, isClientBelowMinimum } from "./clientVersion";
 import {
@@ -222,19 +224,69 @@ describe("UpdateRequiredDialog", () => {
   });
 
   // Rituals fork (2026-11-06): part of this build failed to load and a newer
-  // build is ready. Nothing is incompatible, so the copy says so.
-  it("asks to load the newer build when part of this build failed to load", async () => {
+  // build is ready. Nothing is incompatible, so the copy says so, and the
+  // person may put it off.
+  it("offers the newer build when part of this build failed to load", async () => {
     render(<UpdateRequiredDialog />);
     await flushEffects();
     await act(async () => {
       requestUpdate({ reason: "chunk-load-failed" });
     });
     expect(await screen.findByTestId("update-required-dialog")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Update needed" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Update ready" })).toBeInTheDocument();
     expect(
       screen.getByText("A newer version of this space is ready. Updating reloads this space and any other open Space tabs."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/critical update/i)).toBeNull();
+    expect(screen.getByRole("button", { name: "Later" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Update" })).toBeInTheDocument();
+  });
+
+  it("puts the newer build off with Later, and offers it again on the next failure", async () => {
+    render(<UpdateRequiredDialog />);
+    await flushEffects();
+    await act(async () => {
+      requestUpdate({ reason: "chunk-load-failed" });
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Later" }));
+    await waitFor(() => expect(screen.queryByTestId("update-required-dialog")).toBeNull());
+
+    await act(async () => {
+      requestUpdate({ reason: "chunk-load-failed" });
+    });
+    expect(await screen.findByTestId("update-required-dialog")).toBeInTheDocument();
+  });
+
+  it("puts the newer build off with Escape", async () => {
+    render(<UpdateRequiredDialog />);
+    await flushEffects();
+    await act(async () => {
+      requestUpdate({ reason: "chunk-load-failed" });
+    });
+    fireEvent.keyDown(await screen.findByTestId("update-required-dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("update-required-dialog")).toBeNull());
+  });
+
+  it("a critical update replaces the newer-build offer and cannot be put off", async () => {
+    render(<UpdateRequiredDialog />);
+    await flushEffects();
+    await act(async () => {
+      requestUpdate({ reason: "chunk-load-failed" });
+    });
+    await screen.findByRole("heading", { name: "Update ready" });
+    await act(async () => {
+      requestUpdate({ reason: "min-client-version" });
+    });
+    expect(screen.getByRole("heading", { name: /update required/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Later" })).toBeNull();
+
+    // And the offer never replaces it.
+    await act(async () => {
+      requestUpdate({ reason: "chunk-load-failed" });
+    });
+    expect(screen.getByRole("heading", { name: /update required/i })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByTestId("update-required-dialog"), { key: "Escape" });
+    expect(screen.getByTestId("update-required-dialog")).toBeInTheDocument();
   });
 
   it("renders on min_client_version mismatch", async () => {
@@ -338,9 +390,44 @@ describe("UpdateRequiredDialog", () => {
       requestUpdate({ reason: "sw-need-refresh" });
     });
     const dialog = await screen.findByTestId("update-required-dialog");
+    expect(screen.queryByRole("button", { name: "Later" })).toBeNull();
     fireEvent.keyDown(dialog, { key: "Escape" });
     // Still mounted after Escape.
     expect(screen.getByTestId("update-required-dialog")).toBeInTheDocument();
+  });
+});
+
+// Rituals fork (2026-11-06): which reasons may be put off, and how events fold.
+describe("dismissible reasons", () => {
+  it("only the newer-build offer may be put off", () => {
+    expect(isDismissibleReason("chunk-load-failed")).toBe(true);
+    for (const reason of [
+      "sw-need-refresh",
+      "min-client-version",
+      "ciphersuite-mismatch",
+      "api-426",
+      "api-mls-ciphersuite-mismatch",
+      "api-compat-error",
+    ] as const) {
+      expect(isDismissibleReason(reason), reason).toBe(false);
+    }
+    expect(isDismissibleReason(null)).toBe(false);
+    expect(isDismissibleReason(undefined)).toBe(false);
+  });
+
+  it("folds events: the first opens, a critical one replaces an offer, nothing else changes it", () => {
+    const closed = { open: false, reason: null };
+    const offer = foldUpdateRequired(closed, "chunk-load-failed");
+    expect(offer).toEqual({ open: true, reason: "chunk-load-failed" });
+    expect(foldUpdateRequired(offer, "chunk-load-failed")).toBe(offer);
+
+    const critical = foldUpdateRequired(offer, "api-426");
+    expect(critical).toEqual({ open: true, reason: "api-426" });
+    expect(foldUpdateRequired(critical, "chunk-load-failed")).toBe(critical);
+    expect(foldUpdateRequired(critical, "min-client-version")).toBe(critical);
+
+    // An event without a reason counts as critical.
+    expect(foldUpdateRequired(offer, null)).toEqual({ open: true, reason: null });
   });
 });
 
@@ -423,6 +510,28 @@ describe("applyUpdate — SW path", () => {
 
     expect(updateSW).toHaveBeenCalledOnce();
     expect(reload).toHaveBeenCalledOnce();
+  });
+
+  // Rituals fork (2026-11-06): nothing was waiting, so no controller change
+  // will come; waiting out the timeout would only delay the reload.
+  it("reloads at once when the updater says nothing was waiting", async () => {
+    setWaitingUpdateSW(vi.fn().mockResolvedValue(false));
+    const swContainer = {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as ServiceWorkerContainer;
+    const reload = vi.fn();
+    const timeout = vi.spyOn(globalThis, "setTimeout");
+
+    await applyUpdate({
+      location: { reload } as unknown as Location,
+      serviceWorker: swContainer,
+      controllerChangeTimeoutMs: 60_000,
+    });
+
+    expect(reload).toHaveBeenCalledOnce();
+    // The 60 s timer may be armed, but the reload did not wait for it.
+    expect(timeout.mock.calls.some(([, ms]) => ms === 60_000)).toBe(true);
   });
 
   it("times out and reloads anyway if controllerchange never fires", async () => {

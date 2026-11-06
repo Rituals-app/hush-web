@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isChunkLoadError, markChunkLoadError } from "./chunkErrors";
+import { isChunkLoadError } from "./chunkErrors";
 
 // Rituals fork (2026-11-06): src/lib/chunkErrors.ts.
 describe("isChunkLoadError", () => {
@@ -29,22 +29,9 @@ describe("isChunkLoadError", () => {
     expect(isChunkLoadError(error)).toBe(false);
   });
 
-  it("is true for any error Vite reported as a failed chunk load", () => {
-    const reported = new Error("boom");
-    expect(isChunkLoadError(reported)).toBe(false);
-
-    markChunkLoadError(reported);
-
-    expect(isChunkLoadError(reported)).toBe(true);
-    expect(isChunkLoadError(new Error("boom"))).toBe(false);
-  });
-
-  it("ignores a report that is not an object", () => {
-    expect(() => {
-      markChunkLoadError("boom");
-      markChunkLoadError(null);
-      markChunkLoadError(undefined);
-    }).not.toThrow();
-    expect(isChunkLoadError("boom")).toBe(false);
+  it("is false for an error a module threw while it ran, whoever reported it", () => {
+    // Vite's vite:preloadError carries these too; only the message counts.
+    expect(isChunkLoadError(new TypeError("Cannot read properties of undefined (reading 'id')"))).toBe(false);
+    expect(isChunkLoadError(new ReferenceError("CallPanel is not defined"))).toBe(false);
   });
 });

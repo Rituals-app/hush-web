@@ -2,13 +2,16 @@ import { Component } from 'react';
 import { Button } from '@/components/ui/button';
 import { isChunkLoadError } from '@/lib/chunkErrors';
 import { offerNewerBuild } from '@/lib/chunkRecovery';
+import { postRitualsFrameBusy } from '@/lib/ritualsSpace';
 
 /**
  * Rituals fork (2026-11-06): a screen whose files did not load (React.lazy
  * rejects with the failed import) shows a retry here instead of unmounting
  * the whole app, so the Update dialog mounted beside it can still offer a
- * newer build (src/lib/chunkRecovery.ts). Any other error is passed on
- * unchanged to the next boundary up.
+ * newer build (src/lib/chunkRecovery.ts). In the Rituals task page it also
+ * tells the host to show the pane at once, since the screen that would
+ * report ready did not load. Any other error is passed on unchanged to the
+ * next boundary up.
  */
 export class ChunkErrorBoundary extends Component {
   constructor(props) {
@@ -21,7 +24,9 @@ export class ChunkErrorBoundary extends Component {
   }
 
   componentDidCatch(error) {
-    if (isChunkLoadError(error)) void offerNewerBuild();
+    if (!isChunkLoadError(error)) return;
+    postRitualsFrameBusy();
+    void offerNewerBuild();
   }
 
   render() {

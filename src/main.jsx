@@ -87,9 +87,16 @@ function updateButton() {
 
 // Outcomes after which this page is reloading, so boot must stop.
 const RELOADING = new Set(['applied', 'taken-over']);
-// The newer build is ready but other Space pages are open: activating it
-// reloads them too, so the person decides.
-const ASK_FIRST = new Set(['other-pages', 'no-locks', 'lock-late', 'no-storage']);
+// The newer build is ready but this page will not activate it unasked: other
+// Space pages are open (activating it reloads them too), this browser cannot
+// tell whether they are, or it cannot record a reload (no retry guard). The
+// person decides; the notice says what Update does in each case.
+const ASK_FIRST = new Map([
+  ['other-pages', 'A newer version of this space is ready. Updating also reloads other open Space tabs.'],
+  ['no-locks', 'A newer version of this space is ready. Updating also reloads any other open Space tabs.'],
+  ['lock-late', 'A newer version of this space is ready. Updating also reloads any other open Space tabs.'],
+  ['no-storage', 'A newer version of this space is ready.'],
+]);
 
 // The app module (or a file it needs) did not load. After a release that is
 // usually this page's old build asking for files the host no longer has:
@@ -99,7 +106,10 @@ async function recoverFromFailedLoad(framed) {
   const outcome = await applyWaitingBuildAtStart({ awaitInstall: true });
   if (RELOADING.has(outcome)) return;
   if (ASK_FIRST.has(outcome)) {
-    showNotice('A newer version of this space is ready. Updating also reloads other open Space tabs.', updateButton(), framed);
+    // Another page may activate the newer build first; it then controls this
+    // page too, so load it here as well.
+    navigator.serviceWorker?.addEventListener('controllerchange', () => window.location.reload(), { once: true });
+    showNotice(ASK_FIRST.get(outcome), updateButton(), framed);
     return;
   }
   showNotice('This space could not load. Check your connection, then try again.', retryButton(), framed);

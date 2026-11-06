@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import {
   AlertDialog,
+  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -10,7 +11,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { useUpdateRequired } from "@/hooks/useUpdateRequired";
-import { applyUpdate } from "@/lib/updateRequired";
+import { applyUpdate, isDismissibleReason } from "@/lib/updateRequired";
 
 /**
  * Global non-dismissible dialog that asks the user to reload after a critical
@@ -26,7 +27,8 @@ import { applyUpdate } from "@/lib/updateRequired";
  * The copy is intentionally generic so a non-technical user understands the
  * action without needing to know about MLS or PWAs. Rituals fork: a newer
  * build offered because part of this one failed to load is not a critical
- * update, so it says what Update does instead (src/lib/chunkRecovery.ts).
+ * update (src/lib/chunkRecovery.ts). It says what Update does and may be put
+ * off with Later or Escape; a later failure offers it again.
  */
 const COPY = {
   critical: {
@@ -34,15 +36,20 @@ const COPY = {
     description: "A critical update is required to continue syncing securely.",
   },
   newerBuild: {
-    title: "Update needed",
+    title: "Update ready",
     description: "A newer version of this space is ready. Updating reloads this space and any other open Space tabs.",
   },
 } as const;
 
 export function UpdateRequiredDialog() {
-  const { open, reason } = useUpdateRequired();
-  const copy = reason === "chunk-load-failed" ? COPY.newerBuild : COPY.critical;
+  const { open, reason, dismiss } = useUpdateRequired();
+  const dismissible = isDismissibleReason(reason);
+  const copy = dismissible ? COPY.newerBuild : COPY.critical;
   const [busy, setBusy] = useState(false);
+
+  function onOpenChange(next: boolean) {
+    if (!next && !busy) dismiss();
+  }
 
   async function onUpdateClick() {
     if (busy) return;
@@ -58,15 +65,18 @@ export function UpdateRequiredDialog() {
   }
 
   return (
-    <AlertDialog open={open}>
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent
         // Block the close-on-overlay-click and Escape paths so the dialog
         // truly cannot be dismissed without resolving the update. The cast
         // is because radix-ui's `AlertDialogContent` types `onEscapeKeyDown`
         // / `onInteractOutside` on the underlying primitive but they are
-        // forwarded through the spread in our wrapper.
+        // forwarded through the spread in our wrapper. Rituals fork: Escape
+        // puts off an offer that may wait (Later does the same).
         {...({
-          onEscapeKeyDown: (e: Event) => e.preventDefault(),
+          onEscapeKeyDown: (e: Event) => {
+            if (!dismissible || busy) e.preventDefault();
+          },
           onPointerDownOutside: (e: Event) => e.preventDefault(),
           onInteractOutside: (e: Event) => e.preventDefault(),
         } as Record<string, (e: Event) => void>)}
@@ -77,6 +87,11 @@ export function UpdateRequiredDialog() {
           <AlertDialogDescription>{copy.description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
+          {dismissible ? (
+            <AlertDialogCancel disabled={busy} data-testid="update-required-later">
+              Later
+            </AlertDialogCancel>
+          ) : null}
           <Button
             type="button"
             disabled={busy}
