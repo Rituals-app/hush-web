@@ -92,6 +92,7 @@ describe("a waiting Service Worker (onNeedRefresh)", () => {
     window.removeEventListener("hush:update-required", onDialogEvent);
     window.removeEventListener("hush:diagnostic", onDiagnostic);
     delete (navigator as unknown as { serviceWorker?: unknown }).serviceWorker;
+    vi.unstubAllGlobals();
     pwaRegisterMock.registerSW.mockReset();
     pwaRegisterMock.updateSW.mockClear();
     updateRequiredMock.applyUpdate.mockClear();
@@ -104,6 +105,8 @@ describe("a waiting Service Worker (onNeedRefresh)", () => {
   }
 
   it("keeps the running page as it is: no dialog, no update applied, no reload", async () => {
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
     const { pwa } = await importFreshModules();
     pwa.registerPWA();
 
@@ -114,6 +117,7 @@ describe("a waiting Service Worker (onNeedRefresh)", () => {
     expect(dialogEvents).toHaveLength(0);
     expect(updateRequiredMock.applyUpdate).not.toHaveBeenCalled();
     expect(pwaRegisterMock.updateSW).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it("keeps the activator, so a dialog raised for a real incompatibility loads the new build", async () => {

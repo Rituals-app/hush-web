@@ -24,10 +24,24 @@ import { applyUpdate } from "@/lib/updateRequired";
  * localStorage, or Cache API state.
  *
  * The copy is intentionally generic so a non-technical user understands the
- * action without needing to know about MLS or PWAs.
+ * action without needing to know about MLS or PWAs. Rituals fork: a newer
+ * build offered because part of this one failed to load is not a critical
+ * update, so it says what Update does instead (src/lib/chunkRecovery.ts).
  */
+const COPY = {
+  critical: {
+    title: "Update required",
+    description: "A critical update is required to continue syncing securely.",
+  },
+  newerBuild: {
+    title: "Update needed",
+    description: "A newer version of this space is ready. Updating reloads this space and any other open Space tabs.",
+  },
+} as const;
+
 export function UpdateRequiredDialog() {
-  const { open } = useUpdateRequired();
+  const { open, reason } = useUpdateRequired();
+  const copy = reason === "chunk-load-failed" ? COPY.newerBuild : COPY.critical;
   const [busy, setBusy] = useState(false);
 
   async function onUpdateClick() {
@@ -59,10 +73,8 @@ export function UpdateRequiredDialog() {
         data-testid="update-required-dialog"
       >
         <AlertDialogHeader>
-          <AlertDialogTitle>Update required</AlertDialogTitle>
-          <AlertDialogDescription>
-            A critical update is required to continue syncing securely.
-          </AlertDialogDescription>
+          <AlertDialogTitle>{copy.title}</AlertDialogTitle>
+          <AlertDialogDescription>{copy.description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <Button

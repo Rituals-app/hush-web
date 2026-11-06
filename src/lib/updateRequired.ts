@@ -17,7 +17,8 @@
 
 /**
  * Reason codes for surfacing the Update Required dialog. Used for telemetry
- * and to keep tests legible; the UI copy is generic and reason-agnostic.
+ * and to keep tests legible. The UI copy is generic, except for
+ * "chunk-load-failed", which is not an incompatibility (UpdateRequiredDialog).
  */
 export type UpdateRequiredReason =
   | "sw-need-refresh" // a newer SW is waiting (the Rituals fork no longer raises this: see pwaUpdate.ts)
@@ -25,7 +26,8 @@ export type UpdateRequiredReason =
   | "ciphersuite-mismatch" // handshake.current_mls_ciphersuite !== client constant
   | "api-426" // server replied 426 Upgrade Required
   | "api-mls-ciphersuite-mismatch" // server replied with mls_ciphersuite_mismatch error
-  | "api-compat-error"; // generic compatibility error from server (extension hook)
+  | "api-compat-error" // generic compatibility error from server (extension hook)
+  | "chunk-load-failed"; // Rituals fork: part of this build failed to load and a newer build is ready (chunkRecovery.ts)
 
 export interface UpdateRequiredDetail {
   /** Reason the dialog was raised. */

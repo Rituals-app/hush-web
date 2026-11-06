@@ -221,6 +221,22 @@ describe("UpdateRequiredDialog", () => {
     expect(screen.getByRole("heading", { name: /update required/i })).toBeInTheDocument();
   });
 
+  // Rituals fork (2026-11-06): part of this build failed to load and a newer
+  // build is ready. Nothing is incompatible, so the copy says so.
+  it("asks to load the newer build when part of this build failed to load", async () => {
+    render(<UpdateRequiredDialog />);
+    await flushEffects();
+    await act(async () => {
+      requestUpdate({ reason: "chunk-load-failed" });
+    });
+    expect(await screen.findByTestId("update-required-dialog")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Update needed" })).toBeInTheDocument();
+    expect(
+      screen.getByText("A newer version of this space is ready. Updating reloads this space and any other open Space tabs."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/critical update/i)).toBeNull();
+  });
+
   it("renders on min_client_version mismatch", async () => {
     render(<UpdateRequiredDialog />);
     await flushEffects();

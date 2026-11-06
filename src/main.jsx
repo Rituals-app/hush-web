@@ -3,7 +3,8 @@ import './lib/ritualsSpaceBoot.js';
 import { ensureSpaceAccount, isFramed, postToRitualsParent, readSpaceTicket } from './lib/ritualsSpace';
 import { checkFrameStorage } from './lib/ritualsSpaceProbe';
 import { isFrameHostTopLevel, pageInstanceOrigin } from './lib/ritualsSpaceInstance';
-import { applyWaitingBuildAtStart } from './lib/quietUpdate';
+import { activateWaitingBuild, applyWaitingBuildAtStart, controllerChangedSinceBoot } from './lib/quietUpdate';
+import { isChunkLoadError } from './lib/chunkErrors';
 
 // Rituals fork (2026-11-05): one local Space identity per Rituals account. The
 // check runs before any other module of the app is loaded, so nothing has
@@ -21,7 +22,8 @@ function showNotice(message, button, compact) {
     : 'max-width:28rem;margin:20vh auto;padding:0 1.5rem;font:16px/1.5 system-ui,sans-serif;text-align:center');
   const text = document.createElement('p');
   text.textContent = message;
-  main.append(text, button);
+  main.append(text);
+  if (button) main.append(button);
   root.replaceChildren(main);
 }
 
@@ -71,6 +73,38 @@ function showOpenInRituals() {
   showNotice('Spaces open inside Rituals.', link, false);
 }
 
+function updateButton() {
+  const update = document.createElement('button');
+  update.type = 'button';
+  update.textContent = 'Update';
+  update.setAttribute('style', BUTTON_STYLE);
+  update.addEventListener('click', () => {
+    update.disabled = true;
+    void activateWaitingBuild();
+  });
+  return update;
+}
+
+// Outcomes after which this page is reloading, so boot must stop.
+const RELOADING = new Set(['applied', 'taken-over']);
+// The newer build is ready but other Space pages are open: activating it
+// reloads them too, so the person decides.
+const ASK_FIRST = new Set(['other-pages', 'no-locks', 'lock-late', 'no-storage']);
+
+// The app module (or a file it needs) did not load. After a release that is
+// usually this page's old build asking for files the host no longer has:
+// load the newer build when it is ready, else offer a retry.
+async function recoverFromFailedLoad(framed) {
+  showNotice('Loading the latest version of this space\u2026', null, framed);
+  const outcome = await applyWaitingBuildAtStart({ awaitInstall: true });
+  if (RELOADING.has(outcome)) return;
+  if (ASK_FIRST.has(outcome)) {
+    showNotice('A newer version of this space is ready. Updating also reloads other open Space tabs.', updateButton(), framed);
+    return;
+  }
+  showNotice('This space could not load. Check your connection, then try again.', retryButton(), framed);
+}
+
 async function boot() {
   if (isFrameHostTopLevel()) {
     showOpenInRituals();
@@ -79,7 +113,7 @@ async function boot() {
   // Before anything starts: a newer build that is waiting is applied here,
   // with one reload, when this is the only open Space page
   // (src/lib/quietUpdate.ts). The pending ticket survives in sessionStorage.
-  if ((await applyWaitingBuildAtStart()) === 'applied') return;
+  if (RELOADING.has(await applyWaitingBuildAtStart())) return;
   const ticket = readSpaceTicket();
   // Before any identity work (the account check may clear storage). The
   // frame boots whatever the partitioning; only unusable storage stops it.
@@ -96,7 +130,24 @@ async function boot() {
     showSwitchBlocked();
     return;
   }
-  await import('./appMain.jsx');
+  // Another page may have activated a newer build while this one booted; this
+  // page's build would then load from a worker that no longer holds it.
+  if (controllerChangedSinceBoot() && RELOADING.has(await applyWaitingBuildAtStart())) return;
+  try {
+    await import('./appMain.jsx');
+  } catch (error) {
+    const framed = isFramed();
+    // A pane state: the parent shows the frame at once.
+    if (framed) postToRitualsParent({ type: 'busy' });
+    if (isChunkLoadError(error)) {
+      await recoverFromFailedLoad(framed);
+      return;
+    }
+    // The app module itself threw: no newer build fixes that. The page shows a
+    // retry and the console keeps the error.
+    showNotice('This space could not load. Try again.', retryButton(), framed);
+    console.error(error);
+  }
 }
 
 boot();

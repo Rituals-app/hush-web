@@ -14,6 +14,7 @@ import { buildGuildRouteRef } from './lib/slugify';
 import { hasPendingSpaceEntry } from './lib/ritualsSpace';
 import { Toaster } from './components/ui/sonner';
 import { UpdateRequiredDialog } from './components/UpdateRequiredDialog';
+import { ChunkErrorBoundary } from './components/ChunkErrorBoundary.jsx';
 import { E2eTestAuthBridge } from './components/dev/E2eTestAuthBridge.jsx';
 
 // Rituals fork: removed from the route trees and the shell, because Rituals
@@ -241,7 +242,10 @@ export default function App() {
             <E2eTestAuthBridge />
             <AppBackground />
             <DesktopShell>
-              <AppContent />
+              {/* Rituals fork: a screen that fails to load keeps the Update dialog mounted. */}
+              <ChunkErrorBoundary>
+                <AppContent />
+              </ChunkErrorBoundary>
             </DesktopShell>
             <UpdateRequiredDialog />
             <Toaster position="bottom-right" richColors />
