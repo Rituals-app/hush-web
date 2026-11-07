@@ -22,7 +22,8 @@
 //   * the host answers. The newer build's main files are not in the precache,
 //     so reloading into it without a connection ends on the retry notice in
 //     src/main.jsx. canReachHost() asks only when a build is waiting, so other
-//     boots pay nothing;
+//     boots pay nothing. A page whose build failed to load gives a slow host
+//     longer, since it has nothing else to run;
 //   * a reload loop is impossible: at most one attempt per tab every
 //     QUIET_UPDATE_RETRY_MS, and none when that guard cannot be stored.
 // Otherwise the page boots its current, compatible build. The waiting worker
@@ -69,6 +70,14 @@ export const QUIET_UPDATE_INSTALL_TIMEOUT_MS = 15_000;
 
 /** How long boot waits for the host to answer before leaving a waiting build for later. */
 export const QUIET_UPDATE_PROBE_TIMEOUT_MS = 1_500;
+
+/**
+ * The same wait for a page whose build failed to load. It has nothing else to
+ * run, and "offline" leaves it on the notice in src/main.jsx telling the person
+ * to check their connection, so a slow host is worth waiting for. With the
+ * install wait, the longest time behind that notice stays about 20 s.
+ */
+export const QUIET_UPDATE_FAILED_LOAD_PROBE_TIMEOUT_MS = 5_000;
 
 export type QuietUpdateOutcome =
   | "applied"
@@ -306,13 +315,13 @@ function waitForInstalledBuild(registration: ServiceWorkerRegistration, ms: numb
  * file the host must serve for any update to exist. A redirect off this origin
  * (a captive portal) or any error answer counts as no.
  */
-async function canReachHost(): Promise<boolean> {
+async function canReachHost(limitMs: number): Promise<boolean> {
   if (navigator.onLine === false) return false;
   const request = new AbortController();
   try {
     const answer = fetch("/sw.js", { cache: "no-store", mode: "same-origin", signal: request.signal })
       .then((response) => response.ok);
-    return await withTimeout(answer, QUIET_UPDATE_PROBE_TIMEOUT_MS, false);
+    return await withTimeout(answer, limitMs, false);
   } catch {
     return false;
   } finally {
@@ -352,7 +361,13 @@ async function decideAtStart(options: QuietUpdateOptions): Promise<Decision> {
   // The worker stays waiting and the retry window stays unclaimed, so a later
   // start applies it. It also comes before the outcomes that offer Update: a
   // build that cannot load is not worth offering.
-  if (!(await canReachHost())) return { outcome: "offline" };
+  const reachable = await canReachHost(
+    options.awaitInstall ? QUIET_UPDATE_FAILED_LOAD_PROBE_TIMEOUT_MS : QUIET_UPDATE_PROBE_TIMEOUT_MS,
+  );
+  // Another page may have activated the newer build during the check. The
+  // reload that takes this page there does not depend on the answer.
+  if (controllerChangedSinceBoot()) return takenOver();
+  if (!reachable) return { outcome: "offline" };
 
   if (!hasLocks) return { outcome: "no-locks" };
   if (!(await withTimeout(granted, QUIET_UPDATE_STEP_TIMEOUT_MS, false))) return { outcome: "lock-late" };

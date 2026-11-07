@@ -579,6 +579,122 @@ describe("a start that cannot reach the host (offline)", () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
+  // A page whose build failed to load has nothing else to run, and "offline"
+  // puts it on the "Check your connection" notice, so a slow host must not read
+  // as no connection there.
+  describe("a slow host", () => {
+    const answersAfter = (ms: number) => () =>
+      new Promise((resolve) => setTimeout(() => resolve({ ok: true }), ms));
+
+    it("gets longer from a page whose build failed to load, which then applies the build", async () => {
+      const { waiting } = installEnvironment();
+      hostProbe.mockImplementation(answersAfter(2_000));
+      const { applyWaitingBuildAtStart } = await importFresh();
+      const reload = vi.fn();
+
+      const result = track(applyWaitingBuildAtStart({ awaitInstall: true, reload }));
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(result.value).toBeUndefined();
+      expect(waiting!.postMessage).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(result.value).toBe("applied");
+      expect(waiting!.postMessage).toHaveBeenCalledOnce();
+      expect(reload).toHaveBeenCalledOnce();
+    });
+
+    it("gets QUIET_UPDATE_FAILED_LOAD_PROBE_TIMEOUT_MS from that page, then counts as out of reach", async () => {
+      const { waiting } = installEnvironment();
+      hostProbe.mockImplementation(neverAnswers);
+      const { applyWaitingBuildAtStart, QUIET_UPDATE_FAILED_LOAD_PROBE_TIMEOUT_MS } = await importFresh();
+      expect(QUIET_UPDATE_FAILED_LOAD_PROBE_TIMEOUT_MS).toBe(5_000);
+      const reload = vi.fn();
+
+      const result = track(applyWaitingBuildAtStart({ awaitInstall: true, reload }));
+      await vi.advanceTimersByTimeAsync(QUIET_UPDATE_FAILED_LOAD_PROBE_TIMEOUT_MS - 1);
+      const { signal } = hostProbe.mock.calls[0]?.[1] as RequestInit;
+      expect(result.value).toBeUndefined();
+      expect(signal?.aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(result.value).toBe("offline");
+      expect(signal?.aborted).toBe(true);
+      expect(hostProbe).toHaveBeenCalledOnce();
+      expect(waiting!.postMessage).not.toHaveBeenCalled();
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    it("still gets QUIET_UPDATE_PROBE_TIMEOUT_MS from a normal start, which keeps its build", async () => {
+      const { waiting } = installEnvironment();
+      hostProbe.mockImplementation(answersAfter(2_000));
+      const { applyWaitingBuildAtStart, QUIET_UPDATE_PROBE_TIMEOUT_MS } = await importFresh();
+      const reload = vi.fn();
+
+      const result = track(applyWaitingBuildAtStart({ reload }));
+      await vi.advanceTimersByTimeAsync(QUIET_UPDATE_PROBE_TIMEOUT_MS - 1);
+      expect(result.value).toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(result.value).toBe("offline");
+      expect(waiting!.postMessage).not.toHaveBeenCalled();
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    it("does not make a failed request wait: that page learns at once", async () => {
+      installEnvironment();
+      hostProbe.mockImplementation(() => Promise.reject(new TypeError("Failed to fetch")));
+      const { applyWaitingBuildAtStart } = await importFresh();
+
+      const result = track(applyWaitingBuildAtStart({ awaitInstall: true, reload: vi.fn() }));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(result.value).toBe("offline");
+    });
+  });
+
+  // The reload for a takeover does not depend on the host: the page's build has
+  // already lost its worker, and nothing else would notice on the failed-load path.
+  describe("a newer build that takes over during the check", () => {
+    it.each<[string, { awaitInstall?: boolean }, { ok: boolean }]>([
+      ["a normal start, the host answers", {}, { ok: true }],
+      ["a normal start, the host fails", {}, { ok: false }],
+      ["a failed load, the host answers", { awaitInstall: true }, { ok: true }],
+      ["a failed load, the host fails", { awaitInstall: true }, { ok: false }],
+    ])("reloads into it without activating anything (%s)", async (_label, start, answer) => {
+      const { container, waiting } = installEnvironment();
+      hostProbe.mockImplementation(() => {
+        container.controller = {};
+        return Promise.resolve(answer);
+      });
+      const { applyWaitingBuildAtStart, QUIET_UPDATE_STORAGE_KEY } = await importFresh();
+      const reload = vi.fn();
+
+      const outcome = await applyWaitingBuildAtStart({ ...start, reload });
+
+      expect(outcome).toBe("taken-over");
+      expect(waiting!.postMessage).not.toHaveBeenCalled();
+      expect(reload).toHaveBeenCalledOnce();
+      expect(window.sessionStorage.getItem(QUIET_UPDATE_STORAGE_KEY)).toBe(String(NOW));
+    });
+
+    it("holds to the retry window like any other takeover", async () => {
+      const { container, waiting } = installEnvironment();
+      hostProbe.mockImplementation(() => {
+        container.controller = {};
+        return Promise.resolve({ ok: true });
+      });
+      const { applyWaitingBuildAtStart, QUIET_UPDATE_STORAGE_KEY } = await importFresh();
+      window.sessionStorage.setItem(QUIET_UPDATE_STORAGE_KEY, String(NOW));
+      const reload = vi.fn();
+
+      const outcome = await applyWaitingBuildAtStart({ awaitInstall: true, reload });
+
+      expect(outcome).toBe("recent");
+      expect(waiting!.postMessage).not.toHaveBeenCalled();
+      expect(reload).not.toHaveBeenCalled();
+    });
+  });
+
   it("asks this origin for sw.js past the HTTP cache, and applies the build when the host answers", async () => {
     const { waiting } = installEnvironment();
 
