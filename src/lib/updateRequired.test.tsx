@@ -8,7 +8,7 @@
  * `applyUpdate` and through manual events on the global update store.
  */
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, renderHook, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -403,7 +403,7 @@ describe("UpdateRequiredDialog", () => {
 // must not put focus on a button the next keystroke could press, and it gives
 // the text field its focus back when it closes.
 describe("UpdateRequiredDialog focus", () => {
-  const fields: HTMLInputElement[] = [];
+  const fields: HTMLElement[] = [];
 
   /** A focused text field outside React, so a test can remove it. */
   function focusedField(value = ""): HTMLInputElement {
@@ -440,8 +440,43 @@ describe("UpdateRequiredDialog focus", () => {
     });
   }
 
+  /** jsdom says a page has focus only while an element does; a browser means the keyboard. */
+  function pageHasKeyboard(answer: boolean) {
+    vi.spyOn(document, "hasFocus").mockReturnValue(answer);
+  }
+
+  /** The browser's event when this window or frame gets the keyboard. */
+  function keyboardComesBack() {
+    pageHasKeyboard(true);
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+  }
+
+  /**
+   * Text selected in the page, as an editor's caret is. Returns a watch on the
+   * clear: jsdom's focus() moves the selection by itself, so what it ends up as
+   * says nothing here.
+   */
+  function selectSomething() {
+    const text = document.createElement("p");
+    text.textContent = "selected";
+    document.body.append(text);
+    fields.push(text);
+    const selection = document.getSelection() as Selection;
+    selection.selectAllChildren(text);
+    return vi.spyOn(selection, "removeAllRanges");
+  }
+
+  beforeEach(() => {
+    pageHasKeyboard(true);
+  });
+
   afterEach(() => {
     fields.splice(0).forEach((field) => field.remove());
+    document.getSelection()?.removeAllRanges();
+    // A press, as a real next key would be, so no close outlives its test.
+    fireEvent.keyDown(window, { key: "Shift" });
   });
 
   it("sends the offer's focus to the dialog itself, and Tab reaches its buttons", async () => {
@@ -546,6 +581,283 @@ describe("UpdateRequiredDialog focus", () => {
 
     expect(screen.queryByRole("button", { name: "Later" })).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(dialog));
+  });
+
+  it("clears the selection as it takes focus: WebKit keeps typing at one in an editor", async () => {
+    focusedField();
+    const clearSelection = selectSomething();
+    render(<UpdateRequiredDialog />);
+    await flushEffects();
+
+    const dialog = await raise("chunk-load-failed");
+
+    expect(document.activeElement).toBe(dialog);
+    expect(clearSelection).toHaveBeenCalledTimes(1);
+  });
+
+  // In a frame, the person may be typing in the page around it. focus() from a
+  // timer would take the keyboard from them.
+  describe("when the page does not have the keyboard", () => {
+    it.each<UpdateRequiredDetail["reason"]>(["chunk-load-failed", "api-426"])(
+      "leaves focus and selection alone until it does (%s)",
+      async (reason) => {
+        pageHasKeyboard(false);
+        const field = focusedField("half a thought");
+        const clearSelection = selectSomething();
+        render(<UpdateRequiredDialog />);
+        await flushEffects();
+
+        const dialog = await raise(reason);
+
+        expect(dialog).toHaveAttribute("data-state", "open");
+        expect(document.activeElement).toBe(field);
+        expect(clearSelection).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each<UpdateRequiredDetail["reason"]>(["chunk-load-failed", "api-426"])(
+      "takes focus when the keyboard comes back, so Tab stays inside (%s)",
+      async (reason) => {
+        pageHasKeyboard(false);
+        const user = userEvent.setup();
+        const field = focusedField("half a thought");
+        const clearSelection = selectSomething();
+        render(<UpdateRequiredDialog />);
+        await flushEffects();
+        const dialog = await raise(reason);
+
+        keyboardComesBack();
+
+        expect(document.activeElement).toBe(dialog);
+        expect(clearSelection).toHaveBeenCalledTimes(1);
+        await user.tab();
+        expect(document.activeElement).toBe(reason === "api-426" ? update() : later());
+        expect(field.value).toBe("half a thought");
+      },
+    );
+
+    it("takes focus only the first time the keyboard comes back", async () => {
+      pageHasKeyboard(false);
+      const user = userEvent.setup();
+      focusedField();
+      render(<UpdateRequiredDialog />);
+      await flushEffects();
+      await raise("chunk-load-failed");
+      keyboardComesBack();
+      await user.tab();
+      expect(document.activeElement).toBe(later());
+
+      keyboardComesBack();
+      fireEvent.keyDown(later(), { key: "a" });
+
+      expect(document.activeElement).toBe(later());
+    });
+
+    it("stops waiting for the keyboard once the dialog has closed", async () => {
+      pageHasKeyboard(false);
+      focusedField();
+      render(<UpdateRequiredDialog />);
+      await flushEffects();
+      await raise("chunk-load-failed");
+      fireEvent.click(later());
+      await closed();
+      const clearSelection = selectSomething();
+
+      keyboardComesBack();
+      fireEvent.keyDown(document.body, { key: "a" });
+
+      expect(clearSelection).not.toHaveBeenCalled();
+    });
+
+    // Firefox raises no focus event in a frame when Tab brings the keyboard in,
+    // and Tab from there went to a control behind the dialog.
+    describe("when the keyboard arrives with no focus event", () => {
+      it.each(["Tab", "Enter", "a"])("takes focus at the first key, %s, before it does anything", async (key) => {
+        pageHasKeyboard(false);
+        const field = focusedField("half a thought");
+        const clearSelection = selectSomething();
+        render(<UpdateRequiredDialog />);
+        await flushEffects();
+        const dialog = await raise("api-426");
+        pageHasKeyboard(true);
+
+        const seenByFocus: Array<Element | null> = [];
+        const watch = () => seenByFocus.push(document.activeElement);
+        document.body.addEventListener("keydown", watch);
+        fireEvent.keyDown(document.body, { key });
+        document.body.removeEventListener("keydown", watch);
+
+        expect(seenByFocus).toEqual([dialog]);
+        expect(document.activeElement).toBe(dialog);
+        expect(clearSelection).toHaveBeenCalledTimes(1);
+        expect(update()).toBeEnabled();
+        expect(field.value).toBe("half a thought");
+      });
+
+      it("takes focus only once, whichever way the keyboard came", async () => {
+        pageHasKeyboard(false);
+        const user = userEvent.setup();
+        focusedField();
+        render(<UpdateRequiredDialog />);
+        await flushEffects();
+        await raise("chunk-load-failed");
+        pageHasKeyboard(true);
+        fireEvent.keyDown(document.body, { key: "a" });
+        await user.tab();
+        expect(document.activeElement).toBe(later());
+
+        keyboardComesBack();
+        fireEvent.keyDown(later(), { key: "a" });
+
+        expect(document.activeElement).toBe(later());
+      });
+    });
+
+    // src/lib/ritualsSpace.js turns an Escape pressed in the parent page into a
+    // keydown in this frame. The person's keyboard stays out there.
+    describe("the Escape the parent page forwards", () => {
+      const forwardEscape = () =>
+        fireEvent.keyDown(document.activeElement as Element, { key: "Escape", code: "Escape" });
+
+      it("does not count as the keyboard arriving", async () => {
+        pageHasKeyboard(false);
+        const field = focusedField("half a thought");
+        const clearSelection = selectSomething();
+        render(<UpdateRequiredDialog />);
+        await flushEffects();
+        const dialog = await raise("api-426");
+
+        forwardEscape();
+
+        expect(dialog).toHaveAttribute("data-state", "open");
+        expect(document.activeElement).toBe(field);
+        expect(clearSelection).not.toHaveBeenCalled();
+
+        keyboardComesBack();
+        expect(document.activeElement).toBe(dialog);
+      });
+
+      it("puts the offer off and leaves the keyboard with the person", async () => {
+        pageHasKeyboard(false);
+        const field = focusedField("half a thought");
+        const focus = vi.spyOn(field, "focus");
+        render(<UpdateRequiredDialog />);
+        await flushEffects();
+        await raise("chunk-load-failed");
+
+        forwardEscape();
+        await closed();
+
+        expect(focus).not.toHaveBeenCalled();
+      });
+    });
+
+    // A window left for another app keeps its focused field; a frame left for the
+    // page around it does not, so there this hands back nothing.
+    it("gives the field its focus back once the keyboard has returned", async () => {
+      pageHasKeyboard(false);
+      const field = focusedField("draft");
+      render(<UpdateRequiredDialog />);
+      await flushEffects();
+      await raise("chunk-load-failed");
+      keyboardComesBack();
+      expect(document.activeElement).not.toBe(field);
+
+      fireEvent.click(later());
+      await closed();
+
+      expect(document.activeElement).toBe(field);
+    });
+
+    it("does not take the keyboard back on closing, once the person has moved away", async () => {
+      const { field } = await openWhileTyping("chunk-load-failed", "half a thought");
+      const focus = vi.spyOn(field, "focus");
+      fireEvent.click(later());
+      pageHasKeyboard(false);
+
+      await closed();
+
+      expect(focus).not.toHaveBeenCalled();
+    });
+  });
+
+  // Enter presses Later on its way down. The field has its focus back before the
+  // key's first auto-repeat, and Enter sends in the composer.
+  describe("a key still held when the dialog closes", () => {
+    function watchKeys(field: HTMLElement) {
+      const reached = vi.fn();
+      field.addEventListener("keydown", reached);
+      return reached;
+    }
+
+    const repeat = (element: HTMLElement, key: string) => fireEvent.keyDown(element, { key, repeat: true });
+
+    async function holdEnterOnLater() {
+      const user = userEvent.setup();
+      const { field } = await openWhileTyping("chunk-load-failed", "half a thought");
+      await user.tab();
+      expect(document.activeElement).toBe(later());
+      await user.keyboard("{Enter>}");
+      await closed();
+      expect(document.activeElement).toBe(field);
+      return { user, field, reached: watchKeys(field) };
+    }
+
+    it("does not repeat into the field that got its focus back", async () => {
+      const { field, reached } = await holdEnterOnLater();
+
+      // false: the browser's action for the key is cancelled too.
+      expect(repeat(field, "Enter")).toBe(false);
+      expect(repeat(field, "Enter")).toBe(false);
+
+      expect(reached).not.toHaveBeenCalled();
+    });
+
+    it("does not repeat into the field after Escape either", async () => {
+      const user = userEvent.setup();
+      const { field } = await openWhileTyping("chunk-load-failed", "half a thought");
+      await user.keyboard("{Escape>}");
+      await closed();
+      expect(document.activeElement).toBe(field);
+      const reached = watchKeys(field);
+
+      expect(repeat(field, "Escape")).toBe(false);
+
+      expect(reached).not.toHaveBeenCalled();
+    });
+
+    it("still holds after another key comes up, as Option does after Option+Tab", async () => {
+      const { field, reached } = await holdEnterOnLater();
+
+      fireEvent.keyUp(field, { key: "Alt" });
+
+      expect(repeat(field, "Enter")).toBe(false);
+      expect(reached).not.toHaveBeenCalled();
+    });
+
+    it("lets the next press through, and that press's own repeats", async () => {
+      const { user, field, reached } = await holdEnterOnLater();
+      expect(repeat(field, "Enter")).toBe(false);
+      await user.keyboard("{/Enter}");
+
+      expect(fireEvent.keyDown(field, { key: "Enter" })).toBe(true);
+      expect(repeat(field, "Enter")).toBe(true);
+
+      expect(reached).toHaveBeenCalledTimes(2);
+    });
+
+    it("costs a hold after a mouse close nothing: no key was down when it closed", async () => {
+      const { field } = await openWhileTyping("chunk-load-failed", "half a thought");
+      fireEvent.click(later());
+      await closed();
+      const reached = watchKeys(field);
+
+      expect(fireEvent.keyDown(field, { key: "Backspace" })).toBe(true);
+      expect(repeat(field, "Backspace")).toBe(true);
+      expect(repeat(field, "Backspace")).toBe(true);
+
+      expect(reached).toHaveBeenCalledTimes(3);
+    });
   });
 });
 

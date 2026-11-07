@@ -41,12 +41,32 @@ const COPY = {
   },
 } as const;
 
+/**
+ * Rituals fork: a key held while this dialog closes (Enter on Later) would next
+ * repeat into the element that just got its focus back, and Enter sends in the
+ * chat composer. Drops those repeats. The next press ends this, and a key that
+ * has been released repeats no more, so nothing waits for a keyup: another key
+ * coming up (Option, after Option+Tab) says nothing about the held one.
+ */
+function ignoreHeldKey() {
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.repeat) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    } else {
+      window.removeEventListener("keydown", onKeyDown, true);
+    }
+  };
+  window.addEventListener("keydown", onKeyDown, true);
+}
+
 export function UpdateRequiredDialog() {
   const { open, reason, dismiss } = useUpdateRequired();
   const dismissible = isDismissibleReason(reason);
   const copy = dismissible ? COPY.newerBuild : COPY.critical;
   const [busy, setBusy] = useState(false);
   const focusBeforeOpen = useRef<HTMLElement | null>(null);
+  const stopWaitingForKeyboard = useRef<(() => void) | null>(null);
 
   function onOpenChange(next: boolean) {
     if (!next && !busy) dismiss();
@@ -56,19 +76,55 @@ export function UpdateRequiredDialog() {
   // is typing. Focus goes to the dialog itself, not a button: a screen reader
   // still announces it and Tab reaches the buttons, but the next keystroke
   // presses nothing. Update reloads the page, so this holds for a critical
-  // update too. Closing gives the focus back.
+  // update too. The selection goes as well, because WebKit keeps typing at a
+  // selection left in an editor. Closing gives the focus back.
+  //
+  // In a frame or window the person is not using, focus() would pull the
+  // keyboard away from the page they are typing in. So this waits until the
+  // keyboard arrives, and then must take focus: Radix's trap only holds Tab
+  // inside once focus has been there.
   function onOpenAutoFocus(event: Event) {
     event.preventDefault();
     const active = document.activeElement;
     focusBeforeOpen.current = active instanceof HTMLElement ? active : null;
-    (event.currentTarget as HTMLElement | null)?.focus({ preventScroll: true });
+    const content = event.currentTarget as HTMLElement | null;
+    const takeFocus = () => {
+      document.getSelection()?.removeAllRanges();
+      content?.focus({ preventScroll: true });
+    };
+    if (document.hasFocus()) {
+      takeFocus();
+      return;
+    }
+    const stopWaiting = () => {
+      window.removeEventListener("focus", keyboardArrived);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+    const keyboardArrived = () => {
+      stopWaiting();
+      takeFocus();
+    };
+    // Firefox gives a frame no focus event when Tab brings the keyboard in, so a
+    // key counts too, unless it is the Escape the parent page forwards.
+    const onKeyDown = () => {
+      if (document.hasFocus()) keyboardArrived();
+    };
+    window.addEventListener("focus", keyboardArrived);
+    window.addEventListener("keydown", onKeyDown, true);
+    stopWaitingForKeyboard.current = stopWaiting;
   }
 
+  // This runs on a timer after the close animation, by when the person may have
+  // moved to the page around a frame. Then the keyboard stays with them.
   function onCloseAutoFocus(event: Event) {
     event.preventDefault();
+    stopWaitingForKeyboard.current?.();
+    stopWaitingForKeyboard.current = null;
     const element = focusBeforeOpen.current;
     focusBeforeOpen.current = null;
-    if (element?.isConnected) element.focus({ preventScroll: true });
+    if (!element?.isConnected || !document.hasFocus()) return;
+    ignoreHeldKey();
+    element.focus({ preventScroll: true });
   }
 
   async function onUpdateClick() {
