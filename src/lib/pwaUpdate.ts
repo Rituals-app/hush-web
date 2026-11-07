@@ -5,21 +5,29 @@
 // so the production import stays static and Vite can bundle it correctly.
 //
 // Side effects: when invoked, this function asks the browser to register the
-// SW. When the plugin reports `onNeedRefresh`, we:
-//   * Stash the updater callback in the global update-required store so the
-//     Update Required dialog can activate the new SW on click.
-//   * Dispatch the global `hush:update-required` event so the dialog opens.
+// SW. When the plugin reports `onNeedRefresh`, we stash the updater callback in
+// the global update-required store, so any Update Required dialog activates the
+// new SW on click.
+//
+// Rituals fork (2026-11-06): a waiting SW only means a newer build of the
+// Space exists. It is not an incompatibility: the server says so separately
+// (handshake min_compatible_client_version, the MLS ciphersuite, a 426), and
+// those still raise the blocking Update Required dialog. So `onNeedRefresh`
+// no longer raises that dialog. Before, every returning person met a
+// non-dismissible "A critical update is required" card after every release.
+// It does not reload a running page either: this page keeps its current,
+// compatible build. The newer build is applied at the start of a later page
+// load, before any app module runs, by src/lib/quietUpdate.ts (called first in
+// src/main.jsx), or by the browser once every page using the old SW has closed.
 //
 // The PWA layer is the ONLY place that touches the SW lifecycle. It does NOT
 // read or write IndexedDB, localStorage, MLS state, vault state, or any
 // authentication material.
 
-import {
-  requestUpdate,
-  setWaitingUpdateSW,
-} from "./updateRequired";
+import { setWaitingUpdateSW } from "./updateRequired";
 import { registerSW } from "virtual:pwa-register";
 import { recordClientDiagnostic } from "./clientDiagnostics";
+import { isDesktopRenderer } from "./quietUpdate";
 
 /**
  * Register the Service Worker via vite-plugin-pwa. Idempotent — calling it
@@ -29,17 +37,6 @@ import { recordClientDiagnostic } from "./clientDiagnostics";
  * SW support) this is a no-op.
  */
 let hasRegistered = false;
-
-function isDesktopRenderer(): boolean {
-  if (typeof window === "undefined") return false;
-
-  const desktopWindow = window as typeof window & {
-    hushDesktop?: { isDesktop?: boolean };
-  };
-
-  return desktopWindow.hushDesktop?.isDesktop === true
-    || window.location.protocol === "app:";
-}
 
 export function registerPWA(): void {
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
@@ -51,7 +48,9 @@ export function registerPWA(): void {
     const updateSW = registerSW({
       immediate: true,
       onNeedRefresh() {
-        // Stash the activator so the Update Required dialog can invoke it.
+        // Stash the activator so an Update Required dialog (raised for a real
+        // incompatibility) loads the new build when clicked. Nothing else
+        // happens now: the next page load applies it (src/lib/quietUpdate.ts).
         setWaitingUpdateSW(async () => {
           await updateSW(true);
         });
@@ -59,9 +58,8 @@ export function registerPWA(): void {
           category: "update",
           event: "sw-need-refresh",
           severity: "info",
-          details: {},
+          details: { outcome: "kept-for-next-load" },
         });
-        requestUpdate({ reason: "sw-need-refresh" });
       },
       onRegisterError(err: unknown) {
         // SW registration failure is non-fatal for the app. Log and move on.

@@ -12,6 +12,8 @@ import { queryClient } from './lib/queryClient.ts';
 import { registerPWA } from './lib/pwaUpdate';
 import { applyStoredAppearancePreferences } from './lib/appearancePreferences.ts';
 import { getRendererDiagnosticLog } from './lib/diagnosticLog';
+import { flushBootUpdateDiagnostics } from './lib/quietUpdate';
+import { installChunkRecovery } from './lib/chunkRecovery';
 import {
   markDesktopShellDocument,
   signalDesktopRendererReady,
@@ -27,6 +29,10 @@ import './styles/global.css';
 // once at boot. The buffer is in-memory only and never leaves the
 // device unless the user explicitly attaches it to a bug report.
 getRendererDiagnosticLog();
+// Rituals fork: boot's update outcomes, kept until the log above listens, and
+// recovery for a file of this build that fails to load after a release.
+flushBootUpdateDiagnostics();
+installChunkRecovery();
 
 registerPWA();
 markDesktopShellDocument();

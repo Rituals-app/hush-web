@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   AlertDialog,
+  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -10,7 +11,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { useUpdateRequired } from "@/hooks/useUpdateRequired";
-import { applyUpdate } from "@/lib/updateRequired";
+import { applyUpdate, isDismissibleReason } from "@/lib/updateRequired";
 
 /**
  * Global non-dismissible dialog that asks the user to reload after a critical
@@ -24,11 +25,107 @@ import { applyUpdate } from "@/lib/updateRequired";
  * localStorage, or Cache API state.
  *
  * The copy is intentionally generic so a non-technical user understands the
- * action without needing to know about MLS or PWAs.
+ * action without needing to know about MLS or PWAs. Rituals fork: a newer
+ * build offered because part of this one failed to load is not a critical
+ * update (src/lib/chunkRecovery.ts). It says what Update does and may be put
+ * off with Later or Escape; a later failure offers it again.
  */
+const COPY = {
+  critical: {
+    title: "Update required",
+    description: "A critical update is required to continue syncing securely.",
+  },
+  newerBuild: {
+    title: "Update ready",
+    description: "A newer version of this space is ready. Updating reloads this space and any other open Space tabs.",
+  },
+} as const;
+
+/**
+ * Rituals fork: a key held while this dialog closes (Enter on Later) would next
+ * repeat into the element that just got its focus back, and Enter sends in the
+ * chat composer. Drops those repeats. The next press ends this, and a key that
+ * has been released repeats no more, so nothing waits for a keyup: another key
+ * coming up (Option, after Option+Tab) says nothing about the held one.
+ */
+function ignoreHeldKey() {
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.repeat) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    } else {
+      window.removeEventListener("keydown", onKeyDown, true);
+    }
+  };
+  window.addEventListener("keydown", onKeyDown, true);
+}
+
 export function UpdateRequiredDialog() {
-  const { open } = useUpdateRequired();
+  const { open, reason, dismiss } = useUpdateRequired();
+  const dismissible = isDismissibleReason(reason);
+  const copy = dismissible ? COPY.newerBuild : COPY.critical;
   const [busy, setBusy] = useState(false);
+  const focusBeforeOpen = useRef<HTMLElement | null>(null);
+  const stopWaitingForKeyboard = useRef<(() => void) | null>(null);
+
+  function onOpenChange(next: boolean) {
+    if (!next && !busy) dismiss();
+  }
+
+  // Rituals fork: no click opens this dialog, and it can open while the person
+  // is typing. Focus goes to the dialog itself, not a button: a screen reader
+  // still announces it and Tab reaches the buttons, but the next keystroke
+  // presses nothing. Update reloads the page, so this holds for a critical
+  // update too. The selection goes as well, because WebKit keeps typing at a
+  // selection left in an editor. Closing gives the focus back.
+  //
+  // In a frame or window the person is not using, focus() would pull the
+  // keyboard away from the page they are typing in. So this waits until the
+  // keyboard arrives, and then must take focus: Radix's trap only holds Tab
+  // inside once focus has been there.
+  function onOpenAutoFocus(event: Event) {
+    event.preventDefault();
+    const active = document.activeElement;
+    focusBeforeOpen.current = active instanceof HTMLElement ? active : null;
+    const content = event.currentTarget as HTMLElement | null;
+    const takeFocus = () => {
+      document.getSelection()?.removeAllRanges();
+      content?.focus({ preventScroll: true });
+    };
+    if (document.hasFocus()) {
+      takeFocus();
+      return;
+    }
+    const stopWaiting = () => {
+      window.removeEventListener("focus", keyboardArrived);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+    const keyboardArrived = () => {
+      stopWaiting();
+      takeFocus();
+    };
+    // Firefox gives a frame no focus event when Tab brings the keyboard in, so a
+    // key counts too, unless it is the Escape the parent page forwards.
+    const onKeyDown = () => {
+      if (document.hasFocus()) keyboardArrived();
+    };
+    window.addEventListener("focus", keyboardArrived);
+    window.addEventListener("keydown", onKeyDown, true);
+    stopWaitingForKeyboard.current = stopWaiting;
+  }
+
+  // This runs on a timer after the close animation, by when the person may have
+  // moved to the page around a frame. Then the keyboard stays with them.
+  function onCloseAutoFocus(event: Event) {
+    event.preventDefault();
+    stopWaitingForKeyboard.current?.();
+    stopWaitingForKeyboard.current = null;
+    const element = focusBeforeOpen.current;
+    focusBeforeOpen.current = null;
+    if (!element?.isConnected || !document.hasFocus()) return;
+    ignoreHeldKey();
+    element.focus({ preventScroll: true });
+  }
 
   async function onUpdateClick() {
     if (busy) return;
@@ -44,27 +141,35 @@ export function UpdateRequiredDialog() {
   }
 
   return (
-    <AlertDialog open={open}>
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent
         // Block the close-on-overlay-click and Escape paths so the dialog
         // truly cannot be dismissed without resolving the update. The cast
         // is because radix-ui's `AlertDialogContent` types `onEscapeKeyDown`
         // / `onInteractOutside` on the underlying primitive but they are
-        // forwarded through the spread in our wrapper.
+        // forwarded through the spread in our wrapper. Rituals fork: Escape
+        // puts off an offer that may wait (Later does the same).
         {...({
-          onEscapeKeyDown: (e: Event) => e.preventDefault(),
+          onEscapeKeyDown: (e: Event) => {
+            if (!dismissible || busy) e.preventDefault();
+          },
           onPointerDownOutside: (e: Event) => e.preventDefault(),
           onInteractOutside: (e: Event) => e.preventDefault(),
         } as Record<string, (e: Event) => void>)}
+        onOpenAutoFocus={onOpenAutoFocus}
+        onCloseAutoFocus={onCloseAutoFocus}
         data-testid="update-required-dialog"
       >
         <AlertDialogHeader>
-          <AlertDialogTitle>Update required</AlertDialogTitle>
-          <AlertDialogDescription>
-            A critical update is required to continue syncing securely.
-          </AlertDialogDescription>
+          <AlertDialogTitle>{copy.title}</AlertDialogTitle>
+          <AlertDialogDescription>{copy.description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
+          {dismissible ? (
+            <AlertDialogCancel disabled={busy} data-testid="update-required-later">
+              Later
+            </AlertDialogCancel>
+          ) : null}
           <Button
             type="button"
             disabled={busy}
