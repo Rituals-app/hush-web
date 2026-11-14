@@ -89,13 +89,15 @@ function updateButton() {
 const RELOADING = new Set(['applied', 'taken-over']);
 // The newer build is ready but this page will not activate it unasked: other
 // Space pages are open (activating it reloads them too), this browser cannot
-// tell whether they are, or it cannot record a reload (no retry guard). The
-// person decides; the notice says what Update does in each case.
+// tell whether they are, it cannot record a reload (no retry guard), or it
+// already reloaded once within the retry window ('recent'). The person
+// decides; the notice says what Update does in each case.
 const ASK_FIRST = new Map([
-  ['other-pages', 'A newer version of this space is ready. Updating also reloads other open Space tabs.'],
-  ['no-locks', 'A newer version of this space is ready. Updating also reloads any other open Space tabs.'],
-  ['lock-late', 'A newer version of this space is ready. Updating also reloads any other open Space tabs.'],
-  ['no-storage', 'A newer version of this space is ready.'],
+  ['other-pages', 'A newer version of this Space is ready. Updating also reloads other open Space tabs and interrupts a call or an unsent message there.'],
+  ['no-locks', 'A newer version of this Space is ready. Updating also reloads any other open Space tabs and interrupts a call or an unsent message there.'],
+  ['lock-late', 'A newer version of this Space is ready. Updating also reloads any other open Space tabs and interrupts a call or an unsent message there.'],
+  ['no-storage', 'A newer version of this Space is ready.'],
+  ['recent', 'A newer version of this Space is ready.'],
 ]);
 
 // The app module (or a file it needs) did not load. After a release that is

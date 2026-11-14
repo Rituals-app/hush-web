@@ -37,7 +37,7 @@ const COPY = {
   },
   newerBuild: {
     title: "Update ready",
-    description: "A newer version of this space is ready. Updating reloads this space and any other open Space tabs.",
+    description: "A newer version of this Space is ready. Updating reloads this Space and any other open Space tabs, and interrupts a call or an unsent message there.",
   },
 } as const;
 

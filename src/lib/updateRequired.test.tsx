@@ -237,7 +237,7 @@ describe("UpdateRequiredDialog", () => {
     expect(await screen.findByTestId("update-required-dialog")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Update ready" })).toBeInTheDocument();
     expect(
-      screen.getByText("A newer version of this space is ready. Updating reloads this space and any other open Space tabs."),
+      screen.getByText("A newer version of this Space is ready. Updating reloads this Space and any other open Space tabs, and interrupts a call or an unsent message there."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/critical update/i)).toBeNull();
     expect(screen.getByRole("button", { name: "Later" })).toBeInTheDocument();
@@ -894,7 +894,7 @@ describe("UpdateRequiredDialog while it closes", () => {
 
     await waitFor(() => expect(dialog).toHaveAttribute("data-state", "closed"));
     expect(dialog).toHaveTextContent("Update ready");
-    expect(dialog).toHaveTextContent("A newer version of this space is ready.");
+    expect(dialog).toHaveTextContent("A newer version of this Space is ready.");
     expect(dialog).not.toHaveTextContent(/update required|critical/i);
     expect(screen.getByTestId("update-required-later")).toBeInTheDocument();
   });

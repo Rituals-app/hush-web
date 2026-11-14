@@ -14,6 +14,8 @@
  *   display name for a new identity.
  */
 
+import { QUIET_UPDATE_STORAGE_KEY } from './quietUpdate';
+
 export const SPACE_PATH = '/space';
 export const SPACE_TICKET_STORAGE_KEY = 'rituals_space_ticket';
 /** The Rituals account (ticket `acct`) this browser's Space identity belongs to. */
@@ -88,11 +90,25 @@ export async function ensureSpaceAccount(ticket) {
   } catch {
     // Storage unavailable: nothing to clear.
   }
+  // This tab's quiet-update retry guard (src/lib/quietUpdate.ts) outlives the
+  // switch: it is not identity data, and losing it would allow a second
+  // automatic reload within the retry window.
+  let quietUpdateAt = null;
+  try {
+    quietUpdateAt = window.sessionStorage.getItem(QUIET_UPDATE_STORAGE_KEY);
+  } catch {
+    // Storage unavailable: there is no guard to keep.
+  }
   try {
     window.sessionStorage.clear();
     writeSessionTicket(ticket);
   } catch {
     // The ticket is still held in memory.
+  }
+  try {
+    if (quietUpdateAt !== null) window.sessionStorage.setItem(QUIET_UPDATE_STORAGE_KEY, quietUpdateAt);
+  } catch {
+    // Without storage the guard could not be kept anyway.
   }
   try {
     window.localStorage.setItem(SPACE_ACCOUNT_KEY, acct);

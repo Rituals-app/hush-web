@@ -41,9 +41,12 @@ vi.mock('./lib/chunkErrors', async (importOriginal) => {
 
 const LOADING = 'Loading the latest version of this space…';
 // What Update does differs by outcome, and the notice says so.
-const ASK_OTHER_PAGES = 'A newer version of this space is ready. Updating also reloads other open Space tabs.';
-const ASK_MAYBE_OTHER_PAGES = 'A newer version of this space is ready. Updating also reloads any other open Space tabs.';
-const ASK_NO_STORAGE = 'A newer version of this space is ready.';
+const ASK_OTHER_PAGES = 'A newer version of this Space is ready. Updating also reloads other open Space tabs and interrupts a call or an unsent message there.';
+const ASK_MAYBE_OTHER_PAGES = 'A newer version of this Space is ready. Updating also reloads any other open Space tabs and interrupts a call or an unsent message there.';
+const ASK_NO_STORAGE = 'A newer version of this Space is ready.';
+// A newer build is ready, but this tab already reloaded into one within the
+// retry window: asking is honest, a connection error would not be.
+const ASK_RECENT = 'A newer version of this Space is ready.';
 const RETRY = 'This space could not load. Check your connection, then try again.';
 const BROKEN = 'This space could not load. Try again.';
 
@@ -154,6 +157,7 @@ describe('when the app module fails to load (src/main.jsx)', () => {
     ['no-locks', ASK_MAYBE_OTHER_PAGES],
     ['lock-late', ASK_MAYBE_OTHER_PAGES],
     ['no-storage', ASK_NO_STORAGE],
+    ['recent', ASK_RECENT],
   ])(
     'asks before loading the newer build, saying what Update does (%s)',
     async (outcome, copy) => {
@@ -169,13 +173,16 @@ describe('when the app module fails to load (src/main.jsx)', () => {
     },
   );
 
-  it('reloads once when another page activates the newer build while it asks', async () => {
+  it.each([
+    ['other-pages', ASK_OTHER_PAGES],
+    ['recent', ASK_RECENT],
+  ])('reloads once when another page activates the newer build while it asks (%s)', async (outcome, copy) => {
     const serviceWorker = new EventTarget();
     Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: serviceWorker });
     const reload = vi.fn();
     vi.stubGlobal('location', { ...window.location, reload });
     try {
-      await boot({ outcomes: ['none-waiting', 'other-pages'], appError: chunkError() }, showsNotice(ASK_OTHER_PAGES));
+      await boot({ outcomes: ['none-waiting', outcome], appError: chunkError() }, showsNotice(copy));
       expect(reload).not.toHaveBeenCalled();
 
       serviceWorker.dispatchEvent(new Event('controllerchange'));
@@ -189,7 +196,7 @@ describe('when the app module fails to load (src/main.jsx)', () => {
     }
   });
 
-  it.each(['none-waiting', 'uncontrolled', 'recent', 'no-registration', 'post-failed', 'error', 'offline'])(
+  it.each(['none-waiting', 'uncontrolled', 'no-registration', 'post-failed', 'error', 'offline'])(
     'offers a retry when no newer build can be loaded (%s)',
     async (outcome) => {
       const order = await boot({ outcomes: ['none-waiting', outcome], appError: chunkError() }, showsNotice(RETRY));
