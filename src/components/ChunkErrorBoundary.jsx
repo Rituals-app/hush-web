@@ -39,7 +39,7 @@ export class ChunkErrorBoundary extends Component {
         data-testid="chunk-error-fallback"
       >
         <p className="max-w-sm text-sm text-muted-foreground">
-          This space could not load. Check your connection, then try again.
+          This Space could not load. Check your connection, then try again.
         </p>
         <Button type="button" variant="outline" onClick={() => window.location.reload()}>
           Try again

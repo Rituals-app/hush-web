@@ -56,7 +56,7 @@ describe('ChunkErrorBoundary', () => {
     render(<Outer><ChunkErrorBoundary><Throws error={failed} /></ChunkErrorBoundary></Outer>);
 
     expect(screen.getByTestId('chunk-error-fallback')).toBeInTheDocument();
-    expect(screen.getByText('This space could not load. Check your connection, then try again.')).toBeInTheDocument();
+    expect(screen.getByText('This Space could not load. Check your connection, then try again.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
     expect(screen.queryByTestId('outer')).toBeNull();
     // The screen that would report ready did not load: the pane shows at once.

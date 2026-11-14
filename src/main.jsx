@@ -43,7 +43,7 @@ function showSwitchBlocked() {
     showNotice('Another Space tab is still open. Close it, then try again.', retryButton(), true);
     return;
   }
-  showNotice('Another Space tab is still open on this device. Close it, then open the space again from Rituals.', retryButton(), false);
+  showNotice('Another Space tab is still open on this device. Close it, then open the Space again from Rituals.', retryButton(), false);
 }
 
 // Framed with storage that does not work at all (private mode, blocked
@@ -55,13 +55,13 @@ function showStorageUnavailable(ticket, reason) {
   postToRitualsParent({ type: 'busy' });
   const open = document.createElement('button');
   open.type = 'button';
-  open.textContent = 'Open space \u2197';
+  open.textContent = 'Open Space \u2197';
   open.setAttribute('style', BUTTON_STYLE);
   open.addEventListener('click', () => {
     const base = `${pageInstanceOrigin()}/space`;
     window.open(ticket ? `${base}#t=${encodeURIComponent(ticket)}` : base, '_blank', 'noopener');
   });
-  showNotice('This browser is not keeping data for this space here.', open, true);
+  showNotice('This browser is not keeping data for this Space here.', open, true);
 }
 
 // The frame host opened on its own: a plain page, nothing booted or stored.
@@ -104,7 +104,7 @@ const ASK_FIRST = new Map([
 // usually this page's old build asking for files the host no longer has:
 // load the newer build when it is ready, else offer a retry.
 async function recoverFromFailedLoad(framed) {
-  showNotice('Loading the latest version of this space\u2026', null, framed);
+  showNotice('Loading the latest version of this Space\u2026', null, framed);
   const outcome = await applyWaitingBuildAtStart({ awaitInstall: true });
   if (RELOADING.has(outcome)) return;
   if (ASK_FIRST.has(outcome)) {
@@ -117,7 +117,7 @@ async function recoverFromFailedLoad(framed) {
   // No app runs behind this notice, so loading again loses nothing. 'online'
   // fires only when the connection comes back, so this cannot loop.
   window.addEventListener('online', () => window.location.reload(), { once: true });
-  showNotice('This space could not load. Check your connection, then try again.', retryButton(), framed);
+  showNotice('This Space could not load. Check your connection, then try again.', retryButton(), framed);
 }
 
 async function boot() {
@@ -160,7 +160,7 @@ async function boot() {
     }
     // The app module itself threw: no newer build fixes that. The page shows a
     // retry and the console keeps the error.
-    showNotice('This space could not load. Try again.', retryButton(), framed);
+    showNotice('This Space could not load. Try again.', retryButton(), framed);
     console.error(error);
   }
 }

@@ -39,7 +39,7 @@ vi.mock('./lib/chunkErrors', async (importOriginal) => {
   return { ...actual, isChunkLoadError: (error) => actual.isChunkLoadError(error?.cause ?? error) };
 });
 
-const LOADING = 'Loading the latest version of this space…';
+const LOADING = 'Loading the latest version of this Space…';
 // What Update does differs by outcome, and the notice says so.
 const ASK_OTHER_PAGES = 'A newer version of this Space is ready. Updating also reloads other open Space tabs and interrupts a call or an unsent message there.';
 const ASK_MAYBE_OTHER_PAGES = 'A newer version of this Space is ready. Updating also reloads any other open Space tabs and interrupts a call or an unsent message there.';
@@ -47,8 +47,8 @@ const ASK_NO_STORAGE = 'A newer version of this Space is ready.';
 // A newer build is ready, but this tab already reloaded into one within the
 // retry window: asking is honest, a connection error would not be.
 const ASK_RECENT = 'A newer version of this Space is ready.';
-const RETRY = 'This space could not load. Check your connection, then try again.';
-const BROKEN = 'This space could not load. Try again.';
+const RETRY = 'This Space could not load. Check your connection, then try again.';
+const BROKEN = 'This Space could not load. Try again.';
 
 function chunkError() {
   return new TypeError('Failed to fetch dynamically imported module: https://space.example.test/assets/appMain-old.js');
